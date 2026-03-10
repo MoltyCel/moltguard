@@ -1,0 +1,24 @@
+{
+  "name": "MolTrust",
+  "description": "Trust infrastructure for AI agents. Identity (W3C DID), reputation scoring, and Verifiable Credentials. x402-enabled endpoints for agent trust verification, sybil scanning, and credential issuance.",
+  "url": "https://moltrust.ch",
+  "api": "https://api.moltrust.ch",
+  "docs": "https://api.moltrust.ch/guard/api/info",
+  "category": "identity-and-trust",
+  "endpoints": [
+    { "path": "/api/agent/score/:address",    "price": "0.05 USDC", "description": "Full agent trust score" },
+    { "path": "/api/agent/detail/:address",   "price": "0.05 USDC", "description": "Detailed trust report" },
+    { "path": "/api/sybil/scan/:address",     "price": "0.10 USDC", "description": "Sybil detection scan" },
+    { "path": "/api/market/check/:id",        "price": "0.05 USDC", "description": "Market integrity check" },
+    { "path": "/api/market/feed",             "price": "0.10 USDC", "description": "Market anomaly feed" },
+    { "path": "/api/credential/issue",        "price": "0.10 USDC", "description": "Issue AgentTrustCredential" },
+    { "path": "/prediction/integrity/:id",    "price": "0.10 USDC", "description": "Prediction market integrity check" },
+    { "path": "/vc/skill/issue",              "price": "5.00 USDC", "description": "Issue VerifiedSkillCredential" },
+    { "path": "/vc/prediction/issue",         "price": "5.00 USDC", "description": "Issue PredictionTrackCredential" },
+    { "path": "/vc/buyer-agent/issue",        "price": "5.00 USDC", "description": "Issue BuyerAgentCredential" },
+    { "path": "/vc/travel-agent/issue",       "price": "5.00 USDC", "description": "Issue TravelAgentCredential" }
+  ],
+  "network": "base",
+  "token": "USDC",
+  "wallet": "0x380238347e58435f40B4da1F1A045A271D5838F5"
+}

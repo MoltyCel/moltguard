@@ -1,0 +1,58 @@
+{
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1",
+    "https://moltrust.ch/schemas/trust-proof/v1"
+  ],
+  "type": [
+    "VerifiableCredential",
+    "TrustProof"
+  ],
+  "issuer": {
+    "id": "did:web:moltrust.ch",
+    "name": "MolTrust"
+  },
+  "issuanceDate": "2026-03-06T08:24:22.383Z",
+  "expirationDate": "2026-03-13T08:24:22.383Z",
+  "credentialSubject": {
+    "id": "did:web:moltrust.ch#moltguard",
+    "vertical": "MT Travel",
+    "evaluationSummary": {
+      "passRate": 0.93,
+      "avgIntegrityScore": 4.2,
+      "testsPassed": 14,
+      "testsRun": 15,
+      "dimensions": [
+        {
+          "name": "VC Issuance",
+          "passed": true
+        },
+        {
+          "name": "Verification",
+          "passed": true
+        },
+        {
+          "name": "Spend Limits",
+          "passed": true
+        },
+        {
+          "name": "Delegation Chain",
+          "passed": true
+        },
+        {
+          "name": "Currency Check",
+          "passed": false
+        }
+      ]
+    },
+    "network": "base",
+    "anchorTx": "0x8a707b4c6591a056b890f8a1153cc0aa49794d2d109ed23f2835d7759cb0bbb6",
+    "proofHash": "sha256:8a707b4c6591a056b890f8a1153cc0aa49794d2d109ed23f2835d7759cb0bbb6"
+  },
+  "proof": {
+    "type": "JsonWebSignature2020",
+    "created": "2026-03-06T08:24:22.383Z",
+    "verificationMethod": "did:web:moltrust.ch#moltguard-key-1",
+    "proofPurpose": "assertionMethod",
+    "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCIsImtpZCI6ImRpZDp3ZWI6bW9sdHJ1c3QuY2gjbW9sdGd1YXJkLWtleS0xIn0.eyJ0eXBlIjoiVHJ1c3RQcm9vZiIsInN1YiI6ImRpZDp3ZWI6bW9sdHJ1c3QuY2gjbW9sdGd1YXJkIiwiaXNzIjoiZGlkOndlYjptb2x0cnVzdC5jaCIsImlhdCI6MTc3Mjc4NTQ2MiwiZXhwIjoxNzczMzkwMjYyLCJoYXNoIjoiOGE3MDdiNGM2NTkxYTA1NmI4OTBmOGExMTUzY2MwYWE0OTc5NGQyZDEwOWVkMjNmMjgzNWQ3NzU5Y2IwYmJiNiJ9.heFzfNg-xzOQk9KKl8rJFARBGXtUBa_WkA_tt1rY39C_oMEwUNCqRWCglsF3i1qUZyKOeVIpio4HASPD1cbuBQ"
+  }
+}

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoltGuard — Trust & Integrity for the Agent Economy</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0a0a0f; color: #e0ddd5; line-height: 1.6; }
+  .container { max-width: 860px; margin: 0 auto; padding: 2rem 1.5rem; }
+  h1 { color: #e8734a; font-size: 1.8rem; margin-bottom: 0.3rem; }
+  .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+  .badge { display: inline-block; background: #1a1a2e; border: 1px solid #333; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; color: #e8734a; margin-left: 0.5rem; }
+  h2 { color: #c0bdb5; font-size: 1.1rem; margin: 2rem 0 0.8rem; border-bottom: 1px solid #222; padding-bottom: 0.3rem; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; font-size: 0.85rem; }
+  th { text-align: left; color: #888; padding: 0.4rem 0.6rem; border-bottom: 1px solid #333; }
+  td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #1a1a2e; }
+  .method { color: #6cb4ee; font-weight: bold; }
+  .path { color: #e0ddd5; }
+  .price { color: #4ecdc4; text-align: right; }
+  .free { color: #888; font-style: italic; }
+  pre { background: #111118; border: 1px solid #222; border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.8rem; line-height: 1.5; margin: 0.5rem 0; }
+  .key { color: #6cb4ee; }
+  .str { color: #e8734a; }
+  .num { color: #4ecdc4; }
+  .bool { color: #c792ea; }
+  a { color: #e8734a; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .signing { background: #111118; border: 1px solid #222; border-radius: 6px; padding: 1rem; font-size: 0.8rem; margin: 0.5rem 0; }
+  .signing span { color: #888; }
+  .footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #222; color: #555; font-size: 0.75rem; }
+  .status { display: inline-block; width: 8px; height: 8px; background: #4ecdc4; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>MoltGuard <span class="badge">v1.1.0</span></h1>
+  <p class="subtitle"><span class="status"></span>Trust & Integrity Service for the x402 Agent Economy</p>
+
+  <h2>Endpoints</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th style="text-align:right">Price</th></tr></thead>
+    <tbody>
+      <tr><td class="method">GET</td><td class="path">/health</td><td class="free">free</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/info</td><td class="free">free</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/agent/sample</td><td class="free">free</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/market/sample</td><td class="free">free</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/agent/score-free/:addr</td><td class="free">free (1/10min)</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/market/check-free/:id</td><td class="free">free (1/10min)</td></tr>
+      <tr><td class="method">POST</td><td class="path">/api/credential/verify</td><td class="free">free</td></tr>
+      <tr style="border-top:1px solid #333"><td class="method">GET</td><td class="path">/api/agent/score/:addr</td><td class="price">$0.005</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/agent/detail/:addr</td><td class="price">$0.01</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/sybil/scan/:addr</td><td class="price">$0.01</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/market/check/:id</td><td class="price">$0.005</td></tr>
+      <tr><td class="method">GET</td><td class="path">/api/market/feed</td><td class="price">$0.02</td></tr>
+      <tr><td class="method">POST</td><td class="path">/api/credential/issue</td><td class="price">$0.05</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:0.8rem;color:#888">Paid endpoints use <a href="https://www.x402.org">x402</a> — USDC on Base. No API keys needed.</p>
+
+  <h2>Live Sample — Agent Score</h2>
+  <pre id="sample">Loading...</pre>
+
+  <h2>Credential Signing</h2>
+  <div class="signing">
+    <span>Algorithm:</span> EdDSA (Ed25519)<br>
+    <span>Verification Method:</span> did:web:moltrust.ch#moltguard-key-1<br>
+    <span>Public Key:</span> <code id="pubkey">loading...</code>
+  </div>
+
+  <h2>Data Sources</h2>
+  <table>
+    <tbody>
+      <tr><td style="color:#6cb4ee">Blockscout</td><td>Wallet history, counterparties, funding source</td></tr>
+      <tr><td style="color:#6cb4ee">Base RPC</td><td>Balance, USDC, ERC-8004 registry</td></tr>
+      <tr><td style="color:#6cb4ee">Polymarket</td><td>Market data, volume, liquidity</td></tr>
+      <tr><td style="color:#6cb4ee">MolTrust API</td><td>DID verification, reputation, credentials</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Built by <a href="https://moltrust.ch">MolTrust</a> · Base Mainnet (eip155:8453) · <a href="https://github.com/moltrust/moltguard">GitHub</a>
+  </div>
+</div>
+<script>
+fetch('/guard/api/agent/sample').then(r=>r.json()).then(d=>{
+  const s=JSON.stringify(d,null,2)
+    .replace(/"([^"]+)":/g,'<span class="key">"$1"</span>:')
+    .replace(/: "([^"]+)"/g,': <span class="str">"$1"</span>')
+    .replace(/: (\d+\.?\d*)/g,': <span class="num">$1</span>')
+    .replace(/: (true|false)/g,': <span class="bool">$1</span>');
+  document.getElementById('sample').innerHTML=s;
+});
+fetch('/guard/api/info').then(r=>r.json()).then(d=>{
+  if(d.signing?.publicKeyHex) document.getElementById('pubkey').textContent=d.signing.publicKeyHex;
+});
+</script>
+</body>
+</html>
