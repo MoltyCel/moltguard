@@ -50,4 +50,9 @@ export const X402_FREE_PATHS = [
   '/api/market/feed',
   '/transparency',
   '/internal',
+  '/salesguard/verify',
+  '/salesguard/reseller/verify',
+  '/salesguard/brand/register',
+  '/salesguard/product/register',
+  '/salesguard/reseller/authorize',
 ];

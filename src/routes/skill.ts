@@ -9,6 +9,9 @@ import {
   getVCByHash,
   getVCsByAuthor,
   checkAuditRateLimit,
+  anchorSkillVC,
+  storeVC,
+  getAnchorInfo,
 } from '../services/skill.js';
 
 const app = new Hono();
@@ -134,7 +137,7 @@ app.post('/vc/skill/issue', async (c) => {
     }
 
     // Check if VC already exists for this hash
-    const existing = getVCByHash(skillHash);
+    const existing = await getVCByHash(skillHash);
     if (existing) {
       return c.json({
         error: 'already_issued',
@@ -153,6 +156,16 @@ app.post('/vc/skill/issue', async (c) => {
       audit,
     });
 
+    // Persist to DB (storeVC is now async)
+    await storeVC(vc);
+
+    // Anchor on Base L2 (async, non-blocking)
+    anchorSkillVC(skillHash).then(anchor => {
+      if (anchor) {
+        console.log('Skill VC anchored:', anchor.tx, 'block', anchor.block);
+      }
+    }).catch(() => {});
+
     return c.json(vc, 201);
   } catch (e: any) {
     return c.json({ error: 'issuance_failed', message: e.message }, 500);
@@ -160,9 +173,9 @@ app.post('/vc/skill/issue', async (c) => {
 });
 
 // Free: verify a skill by its canonical hash
-app.get('/skill/verify/:skillHash', (c) => {
+app.get('/skill/verify/:skillHash', async (c) => {
   const skillHash = c.req.param('skillHash');
-  const vc = getVCByHash(skillHash);
+  const vc = await getVCByHash(skillHash);
 
   if (!vc) {
     return c.json({
@@ -182,14 +195,28 @@ app.get('/skill/verify/:skillHash', (c) => {
 });
 
 // Free: list all VCs for an author DID
-app.get('/skill/verify/did/:did', (c) => {
+app.get('/skill/verify/did/:did', async (c) => {
   const did = decodeURIComponent(c.req.param('did'));
-  const vcs = getVCsByAuthor(did);
+  const vcs = await getVCsByAuthor(did);
 
   return c.json({
     authorDID: did,
     credentials: vcs,
     total: vcs.length,
+  });
+});
+
+
+
+// Check anchor status for a skill VC
+app.get('/skill/anchor/:skillHash', async (c) => {
+  const skillHash = c.req.param('skillHash');
+  const info = await getAnchorInfo(skillHash.startsWith('sha256:') ? skillHash : 'sha256:' + skillHash);
+  return c.json({
+    skillHash,
+    anchored: info.anchor_tx !== null,
+    anchor_tx: info.anchor_tx,
+    anchor_block: info.anchor_block,
   });
 });
 

@@ -3,6 +3,8 @@
 
 import { createHash } from 'node:crypto';
 import { createJWS } from './credential.js';
+import { query } from './db.js';
+import { createHash as cryptoHash } from 'node:crypto';
 import type {
   AuditFinding,
   SkillAudit,
@@ -337,25 +339,62 @@ export function auditSkill(content: string): { score: number; findings: AuditFin
 
 // ── VC Store ──
 
-export function storeVC(vc: VerifiedSkillCredential): void {
+export async function storeVC(vc: VerifiedSkillCredential): Promise<void> {
   const hash = vc.credentialSubject.skillHash;
-  vcStore.set(hash, vc);
-
   const did = vc.credentialSubject.id;
+  // Also keep in-memory for fast reads
+  vcStore.set(hash, vc);
   const existing = authorIndex.get(did) || [];
   if (!existing.includes(hash)) {
     existing.push(hash);
     authorIndex.set(did, existing);
   }
+  // Persist to DB
+  try {
+    await query(
+      'INSERT INTO skill_credentials (skill_hash, agent_did, skill_name, skill_version, github_url, audit_score, audit_findings, credential) VALUES (\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8) ON CONFLICT (skill_hash) DO NOTHING',
+      [hash, did, vc.credentialSubject.skillName, vc.credentialSubject.skillVersion,
+       vc.credentialSubject.repositoryUrl, vc.credentialSubject.audit.score,
+       JSON.stringify(vc.credentialSubject.audit.findings), JSON.stringify(vc)]
+    );
+  } catch (e: any) {
+    console.error('skill_credentials DB write failed:', e.message);
+  }
 }
 
-export function getVCByHash(skillHash: string): VerifiedSkillCredential | null {
-  // Normalize: accept with or without sha256: prefix
+export async function getVCByHash(skillHash: string): Promise<VerifiedSkillCredential | null> {
   const key = skillHash.startsWith('sha256:') ? skillHash : `sha256:${skillHash}`;
-  return vcStore.get(key) || null;
+  // Check in-memory first
+  const cached = vcStore.get(key);
+  if (cached) return cached;
+  // Fall back to DB
+  try {
+    const res = await query('SELECT credential FROM skill_credentials WHERE skill_hash = $1', [key]);
+    if (res.rows.length > 0) {
+      const vc = res.rows[0].credential as VerifiedSkillCredential;
+      vcStore.set(key, vc);
+      return vc;
+    }
+  } catch (e: any) {
+    console.error('skill_credentials DB read failed:', e.message);
+  }
+  return null;
 }
 
-export function getVCsByAuthor(did: string): VerifiedSkillCredential[] {
+export async function getVCsByAuthor(did: string): Promise<VerifiedSkillCredential[]> {
+  // Try DB first (authoritative)
+  try {
+    const res = await query(
+      'SELECT credential FROM skill_credentials WHERE agent_did = $1 ORDER BY issued_at DESC',
+      [did]
+    );
+    if (res.rows.length > 0) {
+      return res.rows.map(r => r.credential as VerifiedSkillCredential);
+    }
+  } catch (e: any) {
+    console.error('skill_credentials DB author lookup failed:', e.message);
+  }
+  // Fall back to in-memory
   const hashes = authorIndex.get(did) || [];
   return hashes.map(h => vcStore.get(h)).filter(Boolean) as VerifiedSkillCredential[];
 }
@@ -427,6 +466,56 @@ export function issueVerifiedSkillVC(params: {
     },
   };
 
-  storeVC(vc);
+  // storeVC moved to route handler (async)
   return vc;
 }
+
+// ── On-chain anchoring (Base L2) ──
+
+export async function anchorSkillVC(skillHash: string): Promise<{tx: string; block: string} | null> {
+  const BASE_KEY = process.env.BASE_WRITE_KEY;
+  if (!BASE_KEY) {
+    console.warn('BASE_WRITE_KEY not set — skipping on-chain anchor');
+    return null;
+  }
+  try {
+    const { exec } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execAsync = promisify(exec);
+
+    const cleanHash = skillHash.replace('sha256:', '');
+    const message = 'MolTrust/SkillVC/1 SHA256:' + cleanHash;
+    const hexData = Buffer.from(message, 'utf8').toString('hex');
+
+    const cmd = '/home/moltstack/.foundry/bin/cast send --rpc-url https://mainnet.base.org --private-key ' + BASE_KEY + ' 0x0000000000000000000000000000000000000000 --value 0 -- 0x' + hexData + ' 2>&1';
+    const { stdout } = await execAsync(cmd, { timeout: 30000 });
+
+    const txMatch = stdout.match(/transactionHash\s+(0x[0-9a-fA-F]+)/);
+    const blockMatch = stdout.match(/blockNumber\s+(\d+)/);
+
+    if (txMatch && blockMatch) {
+      const tx = txMatch[1];
+      const block = blockMatch[1];
+      await query(
+        'UPDATE skill_credentials SET anchor_tx = $1, anchor_block = $2 WHERE skill_hash = $3',
+        [tx, block, skillHash]
+      );
+      console.log('Skill VC anchored: ' + tx + ' block ' + block);
+      return { tx, block };
+    }
+    console.warn('Anchor TX sent but could not parse response');
+    return null;
+  } catch (e: any) {
+    console.error('On-chain anchor failed:', e.message);
+    return null;
+  }
+}
+
+export async function getAnchorInfo(skillHash: string): Promise<{anchor_tx: string | null; anchor_block: string | null}> {
+  try {
+    const res = await query('SELECT anchor_tx, anchor_block FROM skill_credentials WHERE skill_hash = $1', [skillHash]);
+    if (res.rows.length > 0) return res.rows[0];
+  } catch {}
+  return { anchor_tx: null, anchor_block: null };
+}
+

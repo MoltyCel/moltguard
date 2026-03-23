@@ -15,6 +15,7 @@ import skillRoutes from './routes/skill.js';
 import predictionRoutes, { vcPredictionRoute } from './routes/prediction.js';
 import transparencyRoutes from './routes/transparency.js';
 import harnessRoutes from './routes/harness.js';
+import salesguardRoutes from './routes/salesguard.js';
 import { authMiddleware } from './middleware/auth.js';
 
 const app = new Hono();
@@ -46,6 +47,9 @@ app.use('/internal/*', authMiddleware);
 
 // Internal harness routes (auth required, except login)
 app.route('/', harnessRoutes);
+
+// MT Salesguard
+app.route('/', salesguardRoutes);
 
 // 404 fallback
 app.notFound((c) =>
