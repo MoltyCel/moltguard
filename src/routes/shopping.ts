@@ -79,6 +79,7 @@ app.post('/vc/buyer-agent/issue', async (c) => {
     merchants = null,
     maxTransactionsPerDay = 5,
     trustLevel = 'basic',
+    authorizationEnvelope,
   } = body;
 
   if (!agentDID || typeof agentDID !== 'string') {
@@ -107,6 +108,7 @@ app.post('/vc/buyer-agent/issue', async (c) => {
     merchants,
     maxTransactionsPerDay,
     trustLevel,
+    authorizationEnvelope,
   });
 
   return c.json(credential, 201);

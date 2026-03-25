@@ -1,6 +1,7 @@
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import type { Address } from 'viem';
 import { calculateAgentScore } from './scoring.js';
+import { resolveAAE } from '../lib/aae.js';
 import { CONFIG } from '../config.js';
 
 // Load signing key from config (PEM stored as base64 in env)
@@ -91,7 +92,7 @@ export interface VerifiableCredential {
   };
 }
 
-export async function issueCredential(address: Address): Promise<VerifiableCredential> {
+export async function issueCredential(address: Address, authorizationEnvelope?: any): Promise<VerifiableCredential> {
   const agentScore = await calculateAgentScore(address);
 
   const now = new Date();
@@ -105,6 +106,7 @@ export async function issueCredential(address: Address): Promise<VerifiableCrede
     moltrustVerified: agentScore.signals.moltrustVerified,
     assessedAt: now.toISOString(),
     chain: 'base',
+    authorizationEnvelope: resolveAAE('did:web:moltrust.ch', `did:pkh:eip155:8453:${address}`, authorizationEnvelope, 7 * 86400),
   };
 
   // Create JWS over the credential payload

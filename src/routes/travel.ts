@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { resolveAAE } from '../lib/aae.js';
 import { TravelAgentCredentialSchema } from '../schemas/TravelAgentCredential.js';
 import {
   verifyTravelTransaction,
@@ -98,6 +99,7 @@ app.post('/vc/travel-agent/issue', async (c) => {
     allowedDestinations = null,
     maxTransactionsPerDay = 10,
     trustLevel = 'verified',
+    authorizationEnvelope,
   } = body;
 
   if (!agentDID || typeof agentDID !== 'string') {
@@ -123,7 +125,7 @@ app.post('/vc/travel-agent/issue', async (c) => {
     agentDID, principalDID, delegationChain, spendLimit, currency,
     validDays, segments, cabinClass, travelers, hotelMaxStarRating,
     advanceBookingDays, allowedMerchants, allowedDestinations,
-    maxTransactionsPerDay, trustLevel,
+    maxTransactionsPerDay, trustLevel, authorizationEnvelope,
   });
 
   return c.json(credential, 201);

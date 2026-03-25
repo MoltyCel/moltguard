@@ -5,6 +5,7 @@ import * as db from "../services/prediction-db.js";
 import { createJWS } from "../services/credential.js";
 import { PredictionTrackCredentialType } from "../schemas/PredictionTrackCredential.js";
 import { query as dbQuery } from "../services/db.js";
+import { resolveAAE } from "../lib/aae.js";
 
 const prediction = new Hono();
 
@@ -194,7 +195,7 @@ export const vcPredictionRoute = new Hono();
 
 vcPredictionRoute.post("/issue", async (c) => {
   const body = await c.req.json().catch(() => ({} as any));
-  const { address, did } = body;
+  const { address, did, authorizationEnvelope } = body;
   if (!address) return c.json({ error: "address required" }, 400);
 
   const wallet = await db.getWallet(address);
@@ -226,6 +227,7 @@ vcPredictionRoute.post("/issue", async (c) => {
         from: wallet.created_at,
         to: now,
       },
+      authorizationEnvelope: resolveAAE('did:web:moltrust.ch', wallet.linked_did || did || `did:base:${wallet.address}`, authorizationEnvelope, 90 * 86400),
     },
   };
 

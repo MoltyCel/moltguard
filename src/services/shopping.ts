@@ -9,6 +9,7 @@ import {
   type VerificationReceipt,
 } from '../schemas/BuyerAgentCredential.js';
 import { createJWS } from './credential.js';
+import { resolveAAE } from '../lib/aae.js';
 
 // In-memory receipt store (production: would use DB)
 const receiptStore = new Map<string, VerificationReceipt>();
@@ -268,6 +269,7 @@ export function issueBuyerAgentVC(params: {
   merchants: string[] | null;
   maxTransactionsPerDay: number;
   trustLevel: 'basic' | 'verified' | 'premium';
+  authorizationEnvelope?: any;
 }): BuyerAgentCredential {
   const now = new Date();
   const expiry = new Date(now.getTime() + params.validDays * 24 * 60 * 60 * 1000);
@@ -288,6 +290,7 @@ export function issueBuyerAgentVC(params: {
     },
     trustLevel: params.trustLevel,
     issuedBy: 'did:web:moltrust.ch',
+    authorizationEnvelope: resolveAAE('did:web:moltrust.ch', params.agentDID, params.authorizationEnvelope, params.validDays * 86400),
   };
 
   // Create JWS signature

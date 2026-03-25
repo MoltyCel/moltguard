@@ -49,7 +49,7 @@ app.post('/salesguard/product/register', async (c) => {
     }
 
     const body = await c.req.json().catch(() => ({}));
-    const { product_id, name } = body;
+    const { product_id, name, authorizationEnvelope } = body;
 
     if (!product_id || typeof product_id !== 'string') {
       return c.json({ error: 'missing_field', message: 'product_id is required' }, 400);
@@ -58,7 +58,7 @@ app.post('/salesguard/product/register', async (c) => {
       return c.json({ error: 'missing_field', message: 'name is required' }, 400);
     }
 
-    const result = await registerProduct(brand, product_id, name);
+    const result = await registerProduct(brand, product_id, name, authorizationEnvelope);
     return c.json(result, 201);
   } catch (e: any) {
     if (e.code === '23505') {
@@ -79,7 +79,7 @@ app.post('/salesguard/reseller/authorize', async (c) => {
     }
 
     const body = await c.req.json().catch(() => ({}));
-    const { reseller_did, reseller_name, authorized_skus, expires_at } = body;
+    const { reseller_did, reseller_name, authorized_skus, expires_at, authorizationEnvelope } = body;
 
     if (!reseller_did || typeof reseller_did !== 'string') {
       return c.json({ error: 'missing_field', message: 'reseller_did is required' }, 400);
@@ -94,7 +94,7 @@ app.post('/salesguard/reseller/authorize', async (c) => {
       return c.json({ error: 'missing_field', message: 'expires_at is required (ISO 8601)' }, 400);
     }
 
-    const result = await authorizeReseller(brand, reseller_did, reseller_name, authorized_skus, expires_at);
+    const result = await authorizeReseller(brand, reseller_did, reseller_name, authorized_skus, expires_at, authorizationEnvelope);
     return c.json(result, 201);
   } catch (e: any) {
     console.error('[Salesguard] reseller/authorize error:', e);

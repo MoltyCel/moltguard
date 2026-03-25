@@ -16,6 +16,7 @@ import predictionRoutes, { vcPredictionRoute } from './routes/prediction.js';
 import transparencyRoutes from './routes/transparency.js';
 import harnessRoutes from './routes/harness.js';
 import salesguardRoutes from './routes/salesguard.js';
+import aaeRoutes from './routes/aae.js';
 import { authMiddleware } from './middleware/auth.js';
 
 const app = new Hono();
@@ -50,6 +51,9 @@ app.route('/', harnessRoutes);
 
 // MT Salesguard
 app.route('/', salesguardRoutes);
+
+// AAE evaluation
+app.route('/vc/aae', aaeRoutes);
 
 // 404 fallback
 app.notFound((c) =>

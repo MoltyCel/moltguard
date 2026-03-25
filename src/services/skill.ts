@@ -3,6 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import { createJWS } from './credential.js';
+import { resolveAAE } from '../lib/aae.js';
 import { query } from './db.js';
 import { createHash as cryptoHash } from 'node:crypto';
 import type {
@@ -408,6 +409,7 @@ export function issueVerifiedSkillVC(params: {
   skillHash: string;
   repositoryUrl: string;
   audit: { score: number; findings: AuditFinding[] };
+  authorizationEnvelope?: any;
 }): VerifiedSkillCredential {
   const now = new Date();
   const expiry = new Date(now.getTime() + VC_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
@@ -433,6 +435,7 @@ export function issueVerifiedSkillVC(params: {
     audit: auditData,
     anchorTx,
     issuedBy: 'did:web:moltrust.ch',
+    authorizationEnvelope: resolveAAE('did:web:moltrust.ch', params.authorDID, params.authorizationEnvelope, VC_EXPIRY_DAYS * 86400),
   };
 
   const jws = createJWS({

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { verifyJWS, createJWS } from './credential.js';
+import { resolveAAE } from '../lib/aae.js';
 import { calculateAgentScore } from './scoring.js';
 import type { Address } from 'viem';
 import { isValidAddress } from '../types/index.js';
@@ -246,6 +247,7 @@ export function issueTravelAgentVC(params: {
   allowedDestinations?: string[] | null;
   maxTransactionsPerDay?: number;
   trustLevel?: 'basic' | 'verified' | 'premium';
+  authorizationEnvelope?: any;
 }): TravelAgentCredential {
   const now = new Date();
   const expiry = new Date(now.getTime() + params.validDays * 24 * 60 * 60 * 1000);
@@ -301,5 +303,6 @@ export function issueTravelAgentVC(params: {
       proofPurpose: 'assertionMethod',
       jws,
     },
-  };
+    authorizationEnvelope: resolveAAE('did:web:moltrust.ch', params.agentDID, params.authorizationEnvelope, params.validDays * 86400),
+  } as any;
 }

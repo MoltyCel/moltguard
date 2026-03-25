@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { resolveAAE } from '../lib/aae.js';
 import type { Address } from 'viem';
 import { issueCredential, verifyJWS } from '../services/credential.js';
 import { isValidAddress } from '../types/index.js';
@@ -9,12 +10,13 @@ const app = new Hono();
 app.post('/api/credential/issue', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const addr = body.address || '';
+  const authorizationEnvelope = body.authorizationEnvelope;
 
   if (!isValidAddress(addr)) {
     return c.json({ error: 'invalid_address', message: 'Provide a valid 0x Ethereum address in the request body.' }, 400);
   }
 
-  const credential = await issueCredential(addr as Address);
+  const credential = await issueCredential(addr as Address, authorizationEnvelope);
   return c.json(credential);
 });
 

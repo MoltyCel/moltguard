@@ -106,7 +106,7 @@ app.get('/skill/audit', async (c) => {
 // Paid (x402): issue a VerifiedSkillCredential
 app.post('/vc/skill/issue', async (c) => {
   const body = await c.req.json().catch(() => ({} as any));
-  const { authorDID, repositoryUrl } = body;
+  const { authorDID, repositoryUrl, authorizationEnvelope } = body;
 
   if (!authorDID || typeof authorDID !== 'string') {
     return c.json({ error: 'missing_field', message: 'authorDID is required (e.g. did:base:0x...)' }, 400);
@@ -154,6 +154,7 @@ app.post('/vc/skill/issue', async (c) => {
       skillHash,
       repositoryUrl,
       audit,
+      authorizationEnvelope,
     });
 
     // Persist to DB (storeVC is now async)

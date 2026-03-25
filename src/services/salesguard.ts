@@ -1,6 +1,7 @@
 // MT Salesguard — Business logic: brand registration, product provenance, reseller authorization
 import { randomUUID, createHash } from 'node:crypto';
 import { createJWS } from './credential.js';
+import { resolveAAE } from '../lib/aae.js';
 import {
   createBrand, getBrandByApiKey, createProduct, getProduct,
   createReseller, getReseller,
@@ -32,7 +33,8 @@ export async function registerBrand(name: string, domain: string, contactEmail?:
 
 export async function registerProduct(
   brand: { id: string; did: string; name: string; domain: string },
-  productId: string, productName: string
+  productId: string, productName: string,
+  authorizationEnvelope?: any,
 ) {
   const now = new Date();
   const expiry = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000); // 1 year
@@ -45,6 +47,7 @@ export async function registerProduct(
     brandDid: brand.did,
     brandDomain: brand.domain || '',
     issuedAt: now.toISOString(),
+    authorizationEnvelope: resolveAAE('did:web:moltrust.ch', brand.did, authorizationEnvelope, 365 * 86400),
   };
 
   const jws = createJWS({
@@ -88,7 +91,8 @@ export async function registerProduct(
 export async function authorizeReseller(
   brand: { id: string; did: string; name: string },
   resellerDid: string, resellerName: string,
-  authorizedSkus: string[], expiresAt: string
+  authorizedSkus: string[], expiresAt: string,
+  authorizationEnvelope?: any,
 ) {
   const now = new Date();
   const expiry = new Date(expiresAt);
@@ -99,6 +103,7 @@ export async function authorizeReseller(
     brandName: brand.name,
     authorizedSkus,
     expiresAt: expiry.toISOString(),
+    authorizationEnvelope: resolveAAE('did:web:moltrust.ch', resellerDid, authorizationEnvelope, Math.floor((expiry.getTime() - now.getTime()) / 1000)),
   };
 
   const jws = createJWS({

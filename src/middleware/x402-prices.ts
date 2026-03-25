@@ -55,4 +55,5 @@ export const X402_FREE_PATHS = [
   '/salesguard/brand/register',
   '/salesguard/product/register',
   '/salesguard/reseller/authorize',
+  '/vc/aae',
 ];
