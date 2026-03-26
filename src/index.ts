@@ -17,6 +17,7 @@ import transparencyRoutes from './routes/transparency.js';
 import harnessRoutes from './routes/harness.js';
 import salesguardRoutes from './routes/salesguard.js';
 import aaeRoutes from './routes/aae.js';
+import challengeRoutes from './routes/challenge.js';
 import { authMiddleware } from './middleware/auth.js';
 
 const app = new Hono();
@@ -54,6 +55,9 @@ app.route('/', salesguardRoutes);
 
 // AAE evaluation
 app.route('/vc/aae', aaeRoutes);
+
+// Challenge-Response Holder Binding
+app.route('/vc', challengeRoutes);
 
 // 404 fallback
 app.notFound((c) =>
