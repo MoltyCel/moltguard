@@ -166,7 +166,7 @@ app.post('/internal/harness/publish-proof', async (c) => {
     .digest('hex');
 
   // Sign with Ed25519 JWS
-  const jws = createJWS({
+  const jws = await createJWS({
     type: 'TrustProof',
     sub: 'did:web:moltrust.ch#moltguard',
     iss: 'did:web:moltrust.ch',

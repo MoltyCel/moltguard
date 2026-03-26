@@ -402,7 +402,7 @@ export async function getVCsByAuthor(did: string): Promise<VerifiedSkillCredenti
 
 // ── VC Issuance ──
 
-export function issueVerifiedSkillVC(params: {
+export async function issueVerifiedSkillVC(params: {
   authorDID: string;
   skillName: string;
   skillVersion: string;
@@ -410,7 +410,7 @@ export function issueVerifiedSkillVC(params: {
   repositoryUrl: string;
   audit: { score: number; findings: AuditFinding[] };
   authorizationEnvelope?: any;
-}): VerifiedSkillCredential {
+}) {
   const now = new Date();
   const expiry = new Date(now.getTime() + VC_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
@@ -438,7 +438,7 @@ export function issueVerifiedSkillVC(params: {
     authorizationEnvelope: resolveAAE('did:web:moltrust.ch', params.authorDID, params.authorizationEnvelope, VC_EXPIRY_DAYS * 86400),
   };
 
-  const jws = createJWS({
+  const jws = await createJWS({
     sub: params.authorDID,
     iss: 'did:web:moltrust.ch',
     iat: Math.floor(now.getTime() / 1000),

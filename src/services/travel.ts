@@ -231,7 +231,7 @@ export function getTripReceipts(tripId: string): BookingReceipt[] {
   return ids.map(id => receiptStore.get(id)!).filter(Boolean);
 }
 
-export function issueTravelAgentVC(params: {
+export async function issueTravelAgentVC(params: {
   agentDID: string;
   principalDID: string;
   delegationChain?: string[];
@@ -248,7 +248,7 @@ export function issueTravelAgentVC(params: {
   maxTransactionsPerDay?: number;
   trustLevel?: 'basic' | 'verified' | 'premium';
   authorizationEnvelope?: any;
-}): TravelAgentCredential {
+}) {
   const now = new Date();
   const expiry = new Date(now.getTime() + params.validDays * 24 * 60 * 60 * 1000);
 
@@ -277,7 +277,7 @@ export function issueTravelAgentVC(params: {
     issuedBy: 'did:web:moltrust.ch',
   };
 
-  const jws = createJWS({
+  const jws = await createJWS({
     sub: params.agentDID,
     iss: 'did:web:moltrust.ch',
     iat: Math.floor(now.getTime() / 1000),

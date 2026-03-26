@@ -121,7 +121,7 @@ app.post('/vc/travel-agent/issue', async (c) => {
     return c.json({ error: 'invalid_field', message: 'trustLevel must be basic, verified, or premium' }, 400);
   }
 
-  const credential = issueTravelAgentVC({
+  const credential = await issueTravelAgentVC({
     agentDID, principalDID, delegationChain, spendLimit, currency,
     validDays, segments, cabinClass, travelers, hotelMaxStarRating,
     advanceBookingDays, allowedMerchants, allowedDestinations,

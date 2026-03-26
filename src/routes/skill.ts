@@ -147,7 +147,7 @@ app.post('/vc/skill/issue', async (c) => {
     }
 
     // Issue VC
-    const vc = issueVerifiedSkillVC({
+    const vc = await issueVerifiedSkillVC({
       authorDID,
       skillName: name,
       skillVersion: version,

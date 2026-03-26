@@ -50,7 +50,7 @@ export async function registerProduct(
     authorizationEnvelope: resolveAAE('did:web:moltrust.ch', brand.did, authorizationEnvelope, 365 * 86400),
   };
 
-  const jws = createJWS({
+  const jws = await createJWS({
     sub: brand.did,
     iss: 'did:web:moltrust.ch',
     iat: Math.floor(now.getTime() / 1000),
@@ -106,7 +106,7 @@ export async function authorizeReseller(
     authorizationEnvelope: resolveAAE('did:web:moltrust.ch', resellerDid, authorizationEnvelope, Math.floor((expiry.getTime() - now.getTime()) / 1000)),
   };
 
-  const jws = createJWS({
+  const jws = await createJWS({
     sub: resellerDid,
     iss: 'did:web:moltrust.ch',
     iat: Math.floor(now.getTime() / 1000),

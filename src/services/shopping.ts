@@ -259,7 +259,7 @@ export function getReceipt(receiptId: string): VerificationReceipt | null {
   return receiptStore.get(receiptId) || null;
 }
 
-export function issueBuyerAgentVC(params: {
+export async function issueBuyerAgentVC(params: {
   agentDID: string;
   humanDID: string;
   spendLimit: number;
@@ -270,7 +270,7 @@ export function issueBuyerAgentVC(params: {
   maxTransactionsPerDay: number;
   trustLevel: 'basic' | 'verified' | 'premium';
   authorizationEnvelope?: any;
-}): BuyerAgentCredential {
+}) {
   const now = new Date();
   const expiry = new Date(now.getTime() + params.validDays * 24 * 60 * 60 * 1000);
 
@@ -294,7 +294,7 @@ export function issueBuyerAgentVC(params: {
   };
 
   // Create JWS signature
-  const jws = createJWS({
+  const jws = await createJWS({
     sub: params.agentDID,
     iss: 'did:web:moltrust.ch',
     iat: Math.floor(now.getTime() / 1000),

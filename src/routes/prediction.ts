@@ -232,7 +232,7 @@ vcPredictionRoute.post("/issue", async (c) => {
   };
 
   try {
-    const jws = createJWS(credential);
+    const jws = await createJWS(credential);
     return c.json({ credential, jws });
   } catch (err: any) {
     return c.json({ error: "VC signing failed", message: err.message }, 500);

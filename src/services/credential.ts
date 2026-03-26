@@ -3,12 +3,18 @@ import type { Address } from 'viem';
 import { calculateAgentScore } from './scoring.js';
 import { resolveAAE } from '../lib/aae.js';
 import { CONFIG } from '../config.js';
+import { getDecryptedSigningKey } from '../crypto/kms-signer.js';
 
-// Load signing key from config (PEM stored as base64 in env)
-function getSigningKey() {
-  if (!CONFIG.signingKey) return null;
-  const pem = Buffer.from(CONFIG.signingKey, 'base64').toString('utf-8');
-  return createPrivateKey(pem);
+// Load signing key — KMS-encrypted or plaintext fallback
+async function getSigningKey() {
+  try {
+    const keyB64 = await getDecryptedSigningKey();
+    const pem = Buffer.from(keyB64, 'base64').toString('utf-8');
+    return createPrivateKey(pem);
+  } catch (e: any) {
+    console.warn('[Credential] Signing key unavailable:', e.message);
+    return null;
+  }
 }
 
 function getVerificationKey() {
@@ -23,8 +29,8 @@ function base64url(data: Buffer | string): string {
   return buf.toString('base64url');
 }
 
-export function createJWS(payload: object): string {
-  const privateKey = getSigningKey();
+export async function createJWS(payload: object): Promise<string> {
+  const privateKey = await getSigningKey();
   if (!privateKey) {
     // Fallback to placeholder if no key configured
     return `UNSIGNED_${base64url(JSON.stringify(payload))}`;
@@ -110,7 +116,7 @@ export async function issueCredential(address: Address, authorizationEnvelope?: 
   };
 
   // Create JWS over the credential payload
-  const jws = createJWS({
+  const jws = await createJWS({
     sub: credentialSubject.id,
     iss: 'did:web:moltrust.ch',
     iat: Math.floor(now.getTime() / 1000),
