@@ -1,4 +1,5 @@
 import type { Context, Next, MiddlewareHandler } from 'hono';
+import { query } from '../services/db.js';
 import { X402_PRICES, X402_FREE_PATHS } from './x402-prices.js';
 
 const MOLTRUST_WALLET = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4da1F1A045A271D5838F5';
@@ -45,6 +46,22 @@ function verifyPaymentHeader(header: string, expectedPrice: number): boolean {
   }
 }
 
+async function isValidHackathonKey(key: string): Promise<boolean> {
+  if (!key || !key.startsWith('mt_hack_')) return false;
+  try {
+    const result = await query(
+      `UPDATE hackathon_keys
+       SET call_count = call_count + 1, last_used_at = NOW()
+       WHERE api_key = $1 AND active = TRUE AND expires_at > NOW()
+       RETURNING id`,
+      [key]
+    );
+    return result.rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * x402 payment middleware.
  *
@@ -69,6 +86,12 @@ export function createX402Middleware(): MiddlewareHandler {
 
     // Free endpoints: always pass through
     if (isFree(path)) return next();
+
+    // Hackathon keys bypass x402
+    const apiKey = c.req.header('X-API-Key') ?? c.req.header('x-api-key') ?? '';
+    if (apiKey && await isValidHackathonKey(apiKey)) {
+      return next();
+    }
 
     // Determine price for this endpoint
     const price = getPrice(method, path);

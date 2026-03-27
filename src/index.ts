@@ -18,6 +18,7 @@ import harnessRoutes from './routes/harness.js';
 import salesguardRoutes from './routes/salesguard.js';
 import aaeRoutes from './routes/aae.js';
 import challengeRoutes from './routes/challenge.js';
+import hackathonRoutes from './routes/hackathon.js';
 import { authMiddleware } from './middleware/auth.js';
 
 const app = new Hono();
@@ -40,6 +41,9 @@ app.route('/', travelRoutes);
 app.route('/', skillRoutes);
 app.route('/prediction', predictionRoutes);
 app.route('/vc/prediction', vcPredictionRoute);
+
+// Hackathon self-service keys
+app.route('/', hackathonRoutes);
 
 // Public transparency routes (no auth)
 app.route('/', transparencyRoutes);
