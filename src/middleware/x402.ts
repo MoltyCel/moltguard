@@ -30,7 +30,7 @@ function isFree(path: string): boolean {
 }
 
 function verifyPaymentHeader(header: string, expectedPrice: number): boolean {
-  // x402 Payment-Receipt Header validation
+  // x402 v2 Payment-Receipt Header validation
   // Format: "x402 <base64-encoded-receipt>"
   if (!header.startsWith('x402 ')) return false;
   try {
@@ -38,7 +38,8 @@ function verifyPaymentHeader(header: string, expectedPrice: number): boolean {
     return (
       receipt.network === BASE_CHAIN_ID &&
       receipt.recipient?.toLowerCase() === MOLTRUST_WALLET.toLowerCase() &&
-      receipt.amount >= expectedPrice &&
+      // v2: 'amount', v1 compat: 'maxAmountRequired'
+      (receipt.amount ?? receipt.maxAmountRequired) >= expectedPrice &&
       receipt.token === USDC_CONTRACT
     );
   } catch {
@@ -63,13 +64,15 @@ async function isValidHackathonKey(key: string): Promise<boolean> {
 }
 
 /**
- * x402 payment middleware.
+ * x402 v2 payment middleware.
  *
  * When X402_ENABLED=true, paid endpoints return 402 Payment Required
- * unless a valid X-PAYMENT header is present.
+ * unless a valid PAYMENT-SIGNATURE (v2) or X-PAYMENT (v1 compat) header is present.
  *
- * The 402 response includes the x402 payment details so clients
+ * The 402 response includes the x402 v2 payment details so clients
  * (including x402-compatible agents) can auto-pay.
+ *
+ * Ref: x402.org/writing/x402-v2-launch
  */
 export function createX402Middleware(): MiddlewareHandler {
   if (!X402_ENABLED) {
@@ -77,7 +80,7 @@ export function createX402Middleware(): MiddlewareHandler {
     return async (_c: Context, next: Next) => next();
   }
 
-  console.log('[x402] ENABLED — paid endpoints will return 402 without valid payment');
+  console.log('[x402] ENABLED (v2) — paid endpoints will return 402 without valid payment');
 
   return async (c: Context, next: Next) => {
     const url = new URL(c.req.url);
@@ -97,23 +100,30 @@ export function createX402Middleware(): MiddlewareHandler {
     const price = getPrice(method, path);
     if (price === null) return next(); // no price defined = free
 
-    // Check payment header
-    const paymentHeader = c.req.header('X-PAYMENT') ?? c.req.header('x-payment') ?? '';
+    // Check payment header — v2 first, then v1 backward compat
+    const v2Header = c.req.header('PAYMENT-SIGNATURE') ?? c.req.header('payment-signature') ?? '';
+    const v1Header = c.req.header('X-PAYMENT') ?? c.req.header('x-payment') ?? '';
+    const paymentHeader = v2Header || v1Header;
+    const protocolVersion = v2Header ? 'v2' : v1Header ? 'v1' : null;
+
     if (paymentHeader && verifyPaymentHeader(paymentHeader, price)) {
+      // Set protocol version for downstream logging
+      c.set('x402_protocol_version', protocolVersion);
       return next();
     }
 
-    // Return 402 with x402 payment details
+    // Return 402 with x402 v2 payment details
+    c.header('PAYMENT-REQUIRED', 'true');
     return c.json(
       {
         error: 'Payment Required',
         x402: {
-          version: '1',
+          version: '2',
           accepts: [
             {
               scheme: 'exact',
               network: `eip155:${BASE_CHAIN_ID}`,
-              maxAmountRequired: String(Math.round(price * 1e6)), // USDC has 6 decimals
+              amount: String(Math.round(price * 1e6)), // USDC has 6 decimals
               resource: `https://api.moltrust.ch/guard${path}`,
               description: `MolTrust API — ${path}`,
               mimeType: 'application/json',

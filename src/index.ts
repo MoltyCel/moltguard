@@ -18,6 +18,7 @@ import harnessRoutes from './routes/harness.js';
 import salesguardRoutes from './routes/salesguard.js';
 import aaeRoutes from './routes/aae.js';
 import challengeRoutes from './routes/challenge.js';
+import flagsRoutes from './routes/flags.js';
 import hackathonRoutes from './routes/hackathon.js';
 import { authMiddleware } from './middleware/auth.js';
 
@@ -56,6 +57,8 @@ app.route('/', harnessRoutes);
 
 // MT Salesguard
 app.route('/', salesguardRoutes);
+// MoltGuard Outcome Tracker flags
+app.route('/', flagsRoutes);
 
 // AAE evaluation
 app.route('/vc/aae', aaeRoutes);
