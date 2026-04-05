@@ -21,6 +21,7 @@ import challengeRoutes from './routes/challenge.js';
 import flagsRoutes from './routes/flags.js';
 import webhooksRoutes from './routes/webhooks.js';
 import actionRoutes from './routes/action.js';
+import graphRoutes from './routes/graph.js';
 import hackathonRoutes from './routes/hackathon.js';
 import walletRoutes from './routes/wallet.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -67,6 +68,8 @@ app.route('/', flagsRoutes);
 app.route('/', webhooksRoutes);
 // Sequential Action Safety (SAS)
 app.route('/', actionRoutes);
+// MoltGraph — Interaction History Graph
+app.route('/', graphRoutes);
 
 // AAE evaluation
 app.route('/vc/aae', aaeRoutes);
