@@ -19,7 +19,10 @@ import salesguardRoutes from './routes/salesguard.js';
 import aaeRoutes from './routes/aae.js';
 import challengeRoutes from './routes/challenge.js';
 import flagsRoutes from './routes/flags.js';
+import webhooksRoutes from './routes/webhooks.js';
+import actionRoutes from './routes/action.js';
 import hackathonRoutes from './routes/hackathon.js';
+import walletRoutes from './routes/wallet.js';
 import { authMiddleware } from './middleware/auth.js';
 
 const app = new Hono();
@@ -45,6 +48,7 @@ app.route('/vc/prediction', vcPredictionRoute);
 
 // Hackathon self-service keys
 app.route('/', hackathonRoutes);
+app.route('/', walletRoutes);
 
 // Public transparency routes (no auth)
 app.route('/', transparencyRoutes);
@@ -59,6 +63,10 @@ app.route('/', harnessRoutes);
 app.route('/', salesguardRoutes);
 // MoltGuard Outcome Tracker flags
 app.route('/', flagsRoutes);
+// AeoESS webhook receiver
+app.route('/', webhooksRoutes);
+// Sequential Action Safety (SAS)
+app.route('/', actionRoutes);
 
 // AAE evaluation
 app.route('/vc/aae', aaeRoutes);
