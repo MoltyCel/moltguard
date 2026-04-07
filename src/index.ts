@@ -25,12 +25,14 @@ import graphRoutes from './routes/graph.js';
 import hackathonRoutes from './routes/hackathon.js';
 import walletRoutes from './routes/wallet.js';
 import { authMiddleware } from './middleware/auth.js';
+import { requestLogger } from './middleware/requestLogger.js';
 
 const app = new Hono();
 
 // Global middleware
 app.use('*', cors());
 app.use('*', logger());
+app.use('*', requestLogger);
 
 // x402 payment middleware — enforces payment on configured routes
 app.use('*', createX402Middleware());
