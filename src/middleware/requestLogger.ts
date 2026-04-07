@@ -18,10 +18,15 @@ export async function requestLogger(c: Context, next: Next) {
 
   if (SKIP_PATHS.has(path)) return;
 
-  const ip =
+  const rawIp =
     c.req.header('x-forwarded-for')?.split(',')[0].trim() ??
     c.req.header('x-real-ip') ??
     'unknown';
+
+  // DSGVO: anonymize last octet
+  const ip = rawIp.includes('.')
+    ? rawIp.replace(/\.\d+$/, '.0')
+    : rawIp;
 
   const agentDid = c.req.header('x-agent-did') ?? null;
 
