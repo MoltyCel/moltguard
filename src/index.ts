@@ -22,6 +22,7 @@ import flagsRoutes from './routes/flags.js';
 import webhooksRoutes from './routes/webhooks.js';
 import actionRoutes from './routes/action.js';
 import graphRoutes from './routes/graph.js';
+import governanceRoutes from './routes/governance.js';
 import hackathonRoutes from './routes/hackathon.js';
 import walletRoutes from './routes/wallet.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -72,6 +73,8 @@ app.route('/', webhooksRoutes);
 app.route('/', actionRoutes);
 // MoltGraph — Interaction History Graph
 app.route('/', graphRoutes);
+// Governance — capability validation
+app.route('/', governanceRoutes);
 
 // AAE evaluation
 app.route('/vc/aae', aaeRoutes);
