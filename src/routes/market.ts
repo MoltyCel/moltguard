@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { scoreToTier, tierToAssessment } from '../lib/risk-tiers.js';
 import { checkMarketIntegrity, getAnomalyFeed } from '../services/market.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 
@@ -10,13 +11,14 @@ app.get('/api/market/sample', (c) =>
     marketId: '0x00000000000000000000000000000000',
     marketQuestion: 'Will sample event happen by 2026?',
     anomalyScore: 35,
+    riskTier: 'medium',
     signals: {
       volumeSpike: true, volumeChange24h: 125000,
       walletConcentration: null, newWalletInflux: null, priceVolumeDiv: false,
     },
-    assessment: 'MEDIUM RISK: Some unusual patterns detected. Monitor closely.',
+    assessment: tierToAssessment('medium'),
     _meta: {
-      service: 'moltguard', version: '1.1.0',
+      service: 'moltguard', version: '1.3.0',
       note: 'Sample data. Use /api/market/check/:id for real results (x402 payment required).',
     },
   }),

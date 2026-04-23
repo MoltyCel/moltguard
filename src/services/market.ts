@@ -1,3 +1,4 @@
+import { scoreToTier, tierToAssessment } from '../lib/risk-tiers.js';
 // Market data cache: 1 minute TTL (fresher than score data)
 const marketCache = new Map<string, { data: any; expiresAt: number }>();
 const MARKET_CACHE_TTL = 60 * 1000; // 1 minute
@@ -26,6 +27,7 @@ export interface MarketIntegrity {
   marketId: string;
   marketQuestion: string | null;
   anomalyScore: number;
+  riskTier: string;
   signals: {
     volumeSpike: boolean;
     volumeChange24h: number | null;
@@ -65,13 +67,14 @@ export async function checkMarketIntegrity(marketId: string): Promise<MarketInte
       marketId,
       marketQuestion: null,
       anomalyScore: 0,
+      riskTier: "low",
       signals: {
         volumeSpike: false, volumeChange24h: null,
         walletConcentration: null, newWalletInflux: null, priceVolumeDiv: false,
       },
       assessment: 'Market data unavailable. Could not perform integrity check.',
       _meta: {
-        service: 'moltguard', version: '1.1.0',
+        service: 'moltguard', version: '1.3.0',
         timestamp: new Date().toISOString(),
         dataSource: 'polymarket-gamma-api', pricingTier: 'market',
       },
@@ -111,15 +114,14 @@ export async function checkMarketIntegrity(marketId: string): Promise<MarketInte
 
   anomalyScore = Math.min(100, anomalyScore);
 
-  let assessment: string;
-  if (anomalyScore >= 60) assessment = 'HIGH RISK: Multiple integrity anomalies detected. Manual review recommended.';
-  else if (anomalyScore >= 30) assessment = 'MEDIUM RISK: Some unusual patterns detected. Monitor closely.';
-  else assessment = 'LOW RISK: No significant integrity concerns detected.';
+  const riskTier = scoreToTier(anomalyScore);
+  const assessment = tierToAssessment(riskTier);
 
   const result: MarketIntegrity = {
     marketId,
     marketQuestion: marketData.question || null,
     anomalyScore,
+    riskTier,
     signals: {
       volumeSpike,
       volumeChange24h: volume24h || null,
@@ -129,7 +131,7 @@ export async function checkMarketIntegrity(marketId: string): Promise<MarketInte
     },
     assessment,
     _meta: {
-      service: 'moltguard', version: '1.1.0',
+      service: 'moltguard', version: '1.3.0',
       timestamp: new Date().toISOString(),
       dataSource: 'polymarket-gamma-api', pricingTier: 'market',
     },
