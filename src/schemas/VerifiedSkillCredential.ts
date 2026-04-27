@@ -15,7 +15,7 @@ export const VerifiedSkillCredentialSchema = {
       score: 100,
       findings: [],
       passedAt: '<ISO8601>',
-      auditorVersion: '1.0.0',
+      auditorVersion: '1.2.0',
     },
     anchorTx: '0x<tx-hash>',
     issuedBy: 'did:web:moltrust.ch',

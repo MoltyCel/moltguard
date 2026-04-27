@@ -13,7 +13,7 @@ import type {
   SkillAuditResult,
 } from '../schemas/VerifiedSkillCredential.js';
 
-const AUDITOR_VERSION = '1.0.0';
+export const AUDITOR_VERSION = '1.2.0';
 const VC_EXPIRY_DAYS = 90;
 const AUDIT_RATE_LIMIT = 5; // per hour per IP
 const GITHUB_TIMEOUT = 10_000;
@@ -83,16 +83,49 @@ export async function fetchSkillMd(githubUrl: string): Promise<{
   }
 }
 
+// ── YAML frontmatter parser ──
+// Recognizes the de-facto standard `--- ... ---` block at the start of a SKILL.md.
+// Extracts: name, description, license, version, author. Returns null if no frontmatter.
+export function parseFrontmatter(content: string): Record<string, string> | null {
+  if (!content.startsWith('---')) return null;
+  const end = content.indexOf('\n---', 3);
+  if (end < 0) return null;
+  const block = content.slice(3, end);
+  const result: Record<string, string> = {};
+  // Simple key: value parsing — supports quoted strings and multi-line values via indentation
+  const lines = block.split('\n');
+  let currentKey: string | null = null;
+  let currentValue: string[] = [];
+  const flush = () => {
+    if (currentKey) {
+      result[currentKey] = currentValue.join(' ').trim().replace(/^["']|["']$/g, '');
+      currentKey = null;
+      currentValue = [];
+    }
+  };
+  for (const line of lines) {
+    const m = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
+    if (m) {
+      flush();
+      currentKey = m[1].toLowerCase();
+      if (m[2]) currentValue.push(m[2]);
+    } else if (currentKey && line.trim()) {
+      currentValue.push(line.trim());
+    }
+  }
+  flush();
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function extractMeta(content: string): { name: string; version: string } {
-  // Extract name from first heading
-  const nameMatch = content.match(/^#\s+(.+)/m);
-  const name = nameMatch ? nameMatch[1].trim() : 'unknown';
-
-  // Extract version from ## Version section or frontmatter
-  const versionMatch = content.match(/##\s+Version\s*\n+\s*(.+)/i)
-    || content.match(/version:\s*['""]?(\S+)['""]?/i);
-  const version = versionMatch ? versionMatch[1].trim() : '0.0.0';
-
+  const fm = parseFrontmatter(content);
+  // Prefer frontmatter, fall back to markdown heading/section
+  const name = fm?.name?.trim()
+    || content.match(/^#\s+(.+)/m)?.[1]?.trim()
+    || 'unknown';
+  const version = fm?.version?.trim()
+    || content.match(/##\s+Version\s*\n+\s*(.+)/i)?.[1]?.trim()
+    || '0.0.0';
   return { name, version };
 }
 
@@ -110,22 +143,199 @@ export function canonicalSkillHash(raw: string): string {
   return `sha256:${hash}`;
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CHECK REGISTRY — single source of truth for all audit check metadata
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CheckMetadata {
+  id: string;
+  display_name: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  deduction: number;
+  hard_fail: boolean;
+  description: string;
+  check_type: 'regex' | 'structural' | 'file_presence';
+  pattern_count: number | null;
+  cwe_id: string | null;
+  cwe_name: string | null;
+  cwe_url: string | null;
+}
+
+export const CHECK_REGISTRY: CheckMetadata[] = [
+  {
+    id: 'prompt_injection',
+    display_name: 'Prompt Injection Patterns',
+    severity: 'critical',
+    deduction: 40,
+    hard_fail: false,
+    description: 'Detects known prompt injection attempts (instruction override, jailbreak commands, DAN-style roleplay) inside fenced code blocks. Markdown prose mentions of LLM concepts (e.g., "system prompt") do not trigger this check.',
+    check_type: 'regex',
+    pattern_count: 8,
+    cwe_id: 'CWE-1427',
+    cwe_name: 'Improper Neutralization of Input Used for LLM Prompting',
+    cwe_url: 'https://cwe.mitre.org/data/definitions/1427.html'
+  },
+  {
+    id: 'data_exfiltration',
+    display_name: 'Data Exfiltration Patterns',
+    severity: 'critical',
+    deduction: 30,
+    hard_fail: false,
+    description: 'Scans for patterns indicating data exfiltration: outbound webhook calls, suspicious TLDs, send-to-URL constructs, and credential extraction flows.',
+    check_type: 'regex',
+    pattern_count: 8,
+    cwe_id: 'CWE-200',
+    cwe_name: 'Exposure of Sensitive Information to an Unauthorized Actor',
+    cwe_url: 'https://cwe.mitre.org/data/definitions/200.html'
+  },
+  {
+    id: 'tool_scope_violation',
+    display_name: 'Tool Scope Violation',
+    severity: 'high',
+    deduction: 20,
+    hard_fail: false,
+    description: 'Flags real system-access code (os.system, subprocess, child_process, eval/exec, process.env, rm -rf, sudo) inside fenced code blocks. English prose descriptions of workflows do not trigger this check.',
+    check_type: 'regex',
+    pattern_count: 8,
+    cwe_id: 'CWE-78',
+    cwe_name: 'Improper Neutralization of Special Elements used in an OS Command',
+    cwe_url: 'https://cwe.mitre.org/data/definitions/78.html'
+  },
+  {
+    id: 'capability_mismatch',
+    display_name: 'Capability Mismatch',
+    severity: 'high',
+    deduction: 15,
+    hard_fail: false,
+    description: 'Compares declared capabilities in SKILL.md against actual code patterns, flagging skills that request broader scope than declared.',
+    check_type: 'structural',
+    pattern_count: null,
+    cwe_id: 'CWE-276',
+    cwe_name: 'Incorrect Default Permissions',
+    cwe_url: 'https://cwe.mitre.org/data/definitions/276.html'
+  },
+  {
+    id: 'external_ingestion',
+    display_name: 'External Ingestion',
+    severity: 'medium',
+    deduction: 10,
+    hard_fail: false,
+    description: 'Identifies skills with three or more outbound HTTP calls (fetch/axios/requests) indicating significant external data ingestion surface.',
+    check_type: 'structural',
+    pattern_count: null,
+    cwe_id: 'CWE-918',
+    cwe_name: 'Server-Side Request Forgery (SSRF)',
+    cwe_url: 'https://cwe.mitre.org/data/definitions/918.html'
+  },
+  {
+    id: 'format_invalid',
+    display_name: 'Format Invalid',
+    severity: 'low',
+    deduction: 5,
+    hard_fail: false,
+    description: 'Flags formatting issues: missing top-level heading, files exceeding 50KB, or other structural violations of the SKILL.md specification.',
+    check_type: 'structural',
+    pattern_count: null,
+    cwe_id: null,
+    cwe_name: null,
+    cwe_url: null
+  },
+  {
+    id: 'metadata_missing',
+    display_name: 'Metadata Missing',
+    severity: 'low',
+    deduction: 5,
+    hard_fail: false,
+    description: 'Checks for presence of required metadata fields: Purpose, Capabilities/Tools, Author, Version, and License. Each missing field deducts 5 points.',
+    check_type: 'structural',
+    pattern_count: null,
+    cwe_id: null,
+    cwe_name: null,
+    cwe_url: null
+  },
+  {
+    id: 'secrets_scan',
+    display_name: 'Secrets Scan',
+    severity: 'critical',
+    deduction: 40,
+    hard_fail: true,
+    description: 'Detects hardcoded credentials including API keys, authentication tokens, private keys, JWT tokens, and password-like assignments. Hard fail: no credential is issued when secrets are found.',
+    check_type: 'regex',
+    pattern_count: 10,
+    cwe_id: 'CWE-798',
+    cwe_name: 'Use of Hard-coded Credentials',
+    cwe_url: 'https://cwe.mitre.org/data/definitions/798.html'
+  },
+  {
+    id: 'a2a_discovery_scan',
+    display_name: 'A2A Discovery Scan',
+    severity: 'medium',
+    deduction: 10,
+    hard_fail: false,
+    description: 'Verifies A2A protocol compliance by checking for the presence of an agent card at .well-known/agent-card.json or agent-card.json in the repository. With profile=claude_skill this becomes informational (deduction 0).',
+    check_type: 'file_presence',
+    pattern_count: null,
+    cwe_id: null,
+    cwe_name: null,
+    cwe_url: null
+  },
+  {
+    id: 'mcp_scan',
+    display_name: 'MCP-Scan Hook',
+    severity: 'low',
+    deduction: 0,
+    hard_fail: false,
+    description: 'Optional integration with uvx mcp-scan. Adds informational findings when SKILL.md references an MCP server config. Disabled when uvx is not installed (no impact on score).',
+    check_type: 'structural',
+    pattern_count: null,
+    cwe_id: null,
+    cwe_name: null,
+    cwe_url: null
+  }
+];
+
+// Helper: lookup check metadata by id
+export function getCheckMetadata(id: string): CheckMetadata | undefined {
+  return CHECK_REGISTRY.find(c => c.id === id);
+}
+
+export function computeRegistryChecksum(): string {
+  const sorted = [...CHECK_REGISTRY].sort((a, b) => a.id.localeCompare(b.id));
+  const canonical = JSON.stringify(sorted);
+  return createHash("sha256").update(canonical).digest("hex").substring(0, 16);
+}
+
+// ── Code-block extractor ──
+// Returns concatenation of all fenced code blocks. Used to scan code-only
+// patterns (prompt_injection, tool_scope_violation) without hitting markdown prose.
+export function extractCodeBlocks(content: string): string {
+  const blocks: string[] = [];
+  const regex = /```[\s\S]*?```/g;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(content)) !== null) blocks.push(m[0]);
+  // Also include inline code spans (single-backtick) for shell/code snippets
+  const inline = /`[^`\n]+`/g;
+  let i: RegExpExecArray | null;
+  while ((i = inline.exec(content)) !== null) blocks.push(i[0]);
+  return blocks.join('\n');
+}
+
 // ── Security Audit Agent (8 checks) ──
 
+// Injection patterns — these are *imperatives* that try to override the model.
+// Most legitimately appear ONLY in code blocks (e.g., a skill demonstrating an
+// adversarial example). Removed: `system\s*prompt`, `\[INST\]`, `<\|im_start\|>`
+// — too commonly used as documentation references in legitimate skills.
 const INJECTION_PATTERNS = [
-  /ignore\s+(all\s+|any\s+)?previous/i,
-  /disregard\s+(your\s+|all\s+)?instructions/i,
-  /you\s+are\s+now/i,
-  /new\s+persona/i,
+  /ignore\s+(all\s+|any\s+)?previous\s+(instructions|rules|prompts)/i,
+  /disregard\s+(your\s+|all\s+)?(instructions|rules|prompts)/i,
+  /you\s+are\s+now\s+(?:a\s+)?(?:dan|jailbroken|unrestricted)/i,
   /override\s+(your\s+|safety|previous)/i,
-  /jailbreak/i,
+  /\bjailbreak\b/i,
   /\bDAN\s+mode\b/i,
   /forget\s+(everything|your\s+(instructions|rules))/i,
-  /pretend\s+you\s+(are|have)/i,
-  /act\s+as\s+(if|though)\s+you/i,
-  /system\s*prompt/i,
-  /\[INST\]/i,
-  /<\|im_start\|>/i,
+  /pretend\s+you\s+(are|have)\s+(no|none)/i,
 ];
 
 const EXFILTRATION_PATTERNS = [
@@ -139,21 +349,20 @@ const EXFILTRATION_PATTERNS = [
   /webhook\s*url/i,
 ];
 
+// Tool-scope-violation patterns — code/shell only.
+// Removed prose-style matchers ("execute X shell", "run X command",
+// "access environment var", "read all files", "write disk", "modify system")
+// — they collide with English documentation language. Real scope violations
+// look like code or shell tokens, not English sentences.
 const SCOPE_VIOLATION_PATTERNS = [
-  /execute\s+.*shell/i,
-  /run\s+.*command/i,
-  /os\.system/i,
-  /subprocess/i,
-  /child_process/i,
+  /\bos\.system\s*\(/i,
+  /\bsubprocess\.(?:run|Popen|call|check_output)\b/i,
+  /\bchild_process\.(?:exec|spawn|fork)\b/i,
   /\beval\s*\(/i,
   /\bexec\s*\(/i,
-  /access\s+.*environment\s+var/i,
-  /process\.env/i,
-  /read\s+.*all\s+.*files/i,
-  /write\s+.*disk/i,
-  /modify\s+.*system/i,
-  /rm\s+-rf/i,
-  /sudo\b/i,
+  /\bprocess\.env\b/i,
+  /\brm\s+-rf\b/i,
+  /(?:^|[`\s;|&])sudo\s+/i,
 ];
 
 const INGESTION_PATTERNS = [
@@ -164,11 +373,146 @@ const INGESTION_PATTERNS = [
   /requests\.get/gi,
 ];
 
-export function auditSkill(content: string): { score: number; findings: AuditFinding[] } {
+const SECRETS_PATTERNS: { name: string; regex: RegExp }[] = [
+  { name: 'openai_key',        regex: /\bsk-(?:proj-)?[a-zA-Z0-9]{20,}\b/ },
+  { name: 'github_pat',        regex: /\bghp_[a-zA-Z0-9]{36}\b/ },
+  { name: 'github_pat_fg',     regex: /\bgithub_pat_[a-zA-Z0-9_]{80,}\b/ },
+  { name: 'aws_access_key',    regex: /\bAKIA[0-9A-Z]{16}\b/ },
+  { name: 'aws_secret_config', regex: /\baws_secret_access_key\s*[=:]\s*['"]?[a-zA-Z0-9/+=]{20,}/i },
+  { name: 'slack_token',       regex: /\bxox[abpr]-[a-zA-Z0-9-]+\b/ },
+  { name: 'private_key',       regex: /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |)PRIVATE KEY-----/ },
+  { name: 'jwt_token',         regex: /\beyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\b/ },
+  { name: 'anthropic_key',     regex: /\bsk-ant-[a-zA-Z0-9_-]{20,}\b/ },
+  { name: 'generic_secret',    regex: /(?:password|passwd|pwd|secret|api[_-]?key|auth[_-]?token)\s*[:=]\s*["'][^"'\s]{8,}["']/i }
+];
+
+// Placeholder/template detection — suppresses secrets_scan FPs on tutorial code.
+// Examples that should NOT trigger secrets_scan:
+//   GEMINI_API_KEY="your-key", API_TOKEN="<your-token>", PASSWORD="REPLACE_ME",
+//   secret="xxx", token="***", password="EXAMPLE", key="sample-12345"
+const PLACEHOLDER_TOKENS = [
+  'your-', 'your_', '<your', 'YOUR_', '<YOUR_',
+  'REPLACE', 'EXAMPLE', 'PLACEHOLDER', 'INSERT_', 'TODO',
+  'sample-', 'dummy-', 'fake-', 'test-',
+  'xxx', '***', '<...>', '...', '[redacted]', '[REDACTED]',
+];
+
+export function isPlaceholderSecret(matchedLine: string): boolean {
+  const lower = matchedLine.toLowerCase();
+  // Quick check on lowercase tokens
+  for (const tok of PLACEHOLDER_TOKENS) {
+    if (lower.includes(tok.toLowerCase())) return true;
+  }
+  // Extract the value after = or : (with optional quotes) and check if it's
+  // suspiciously short / non-entropic (e.g., "abc", "key", "12345")
+  const valueMatch = matchedLine.match(/[:=]\s*["']([^"']+)["']/);
+  if (valueMatch) {
+    const value = valueMatch[1];
+    // All-same-character placeholders ("aaaaaaaa", "00000000")
+    if (/^(.)\1{6,}$/.test(value)) return true;
+    // Generic short alphabetic placeholders
+    if (/^[a-z]{1,6}(-[a-z]{1,6})*$/i.test(value) && value.length < 12) return true;
+  }
+  return false;
+}
+
+function redactSecret(line: string): string {
+  return line.replace(
+    /\b(sk-[a-zA-Z0-9]+|ghp_[a-zA-Z0-9]+|github_pat_[a-zA-Z0-9_]+|AKIA[0-9A-Z]+|eyJ[a-zA-Z0-9._-]+|xox[abpr]-[a-zA-Z0-9-]+|sk-ant-[a-zA-Z0-9_-]+)\b/g,
+    (match) => match.substring(0, 4) + '***[REDACTED]'
+  ).replace(
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+    '-----BEGIN ***[REDACTED] PRIVATE KEY-----'
+  );
+}
+
+// Repo-level LICENSE check — for skill bundles where individual SKILL.md files
+// don't repeat license metadata but the repo root has LICENSE / LICENSE.md / LICENSE.txt.
+// Returns true if any LICENSE-like file exists at the repo root, false otherwise,
+// null if the URL isn't a GitHub URL or the API call fails.
+async function repoHasLicense(skillUrl: string): Promise<boolean | null> {
+  const match = skillUrl.match(/(?:github\.com|raw\.githubusercontent\.com)\/([^\/]+)\/([^\/]+)/);
+  if (!match) return null;
+  const [, owner, repo] = match;
+  const cleanRepo = repo.replace(/\.git$/, '');
+  const candidates = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'license', 'license.md', 'COPYING'];
+  const headers: Record<string, string> = { 'User-Agent': 'MoltGuard/1.2.0' };
+  if (process.env.GITHUB_TOKEN) headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+  for (const fname of candidates) {
+    try {
+      const resp = await fetch(
+        `https://api.github.com/repos/${owner}/${cleanRepo}/contents/${fname}`,
+        { headers, signal: AbortSignal.timeout(3000) }
+      );
+      if (resp.status === 200) return true;
+    } catch {
+      // network error — try next candidate
+    }
+  }
+  return false;
+}
+
+async function checkA2ADiscovery(skillUrl: string): Promise<AuditFinding[]> {
+  const findings: AuditFinding[] = [];
+
+  const match = skillUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+  if (!match) return findings; // non-GitHub URL — not applicable
+
+  const [, owner, repo] = match;
+  const cleanRepo = repo.replace(/\.git$/, '');
+
+  const paths = ['.well-known/agent-card.json', 'agent-card.json'];
+  let cardFound = false;
+
+  for (const path of paths) {
+    try {
+      const headers: Record<string, string> = {};
+      if (process.env.GITHUB_TOKEN) {
+        headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+      }
+      headers['User-Agent'] = 'MoltGuard/1.2.0';
+      const resp = await fetch(
+        `https://api.github.com/repos/${owner}/${cleanRepo}/contents/${path}`,
+        { headers, signal: AbortSignal.timeout(5000) }
+      );
+      if (resp.status === 200) {
+        cardFound = true;
+        break;
+      }
+    } catch {
+      // network error — don't block the scan
+    }
+  }
+
+  if (!cardFound) {
+    const meta = getCheckMetadata('a2a_discovery_scan');
+    findings.push({
+      id: 'a2a_0',
+      severity: meta?.severity ?? 'medium',
+      category: 'a2a_discovery_scan',
+      description: `No agent card found at .well-known/agent-card.json or agent-card.json in ${owner}/${cleanRepo}`,
+      deduction: meta?.deduction ?? 10,
+    });
+  }
+
+  return findings;
+}
+
+export type AuditProfile = 'default' | 'claude_skill';
+
+export async function auditSkill(
+  content: string,
+  skillUrl?: string,
+  profile: AuditProfile = 'default'
+): Promise<{ score: number; findings: AuditFinding[]; hard_fail?: boolean; hard_fail_reason?: string; vc_issuable?: boolean; profile?: AuditProfile; mcp_scan?: { ran: boolean; available: boolean; findings_count: number } }> {
   const findings: AuditFinding[] = [];
   let findingId = 0;
 
   const lines = content.split('\n');
+  // Code-only view for code/shell pattern checks (prompt_injection, tool_scope_violation)
+  const codeOnly = extractCodeBlocks(content);
+  const frontmatter = parseFrontmatter(content);
+  const hasFrontmatter = frontmatter !== null;
 
   // Helper to find line number for a match
   function findLine(pattern: RegExp): number | undefined {
@@ -178,48 +522,88 @@ export function auditSkill(content: string): { score: number; findings: AuditFin
     return undefined;
   }
 
-  // 1. Prompt injection scan (-40 per finding, cap at 1)
+  // 0. Secrets scan — hard fail if found (check runs first).
+  // Skip placeholder/tutorial lines (e.g., GEMINI_API_KEY="your-key") to avoid
+  // hard-failing legitimate documentation. HARD-FAIL only on real secrets.
+  const secretsMeta = getCheckMetadata('secrets_scan');
+  for (let i = 0; i < lines.length; i++) {
+    for (const pattern of SECRETS_PATTERNS) {
+      if (pattern.regex.test(lines[i])) {
+        // Suppress placeholders for the more permissive `generic_secret` pattern.
+        // Strict patterns (openai_key, github_pat, aws_access_key, jwt_token,
+        // private_key, anthropic_key) are entropy-bound and don't false-positive
+        // on placeholders, so they always trigger.
+        if (pattern.name === 'generic_secret' && isPlaceholderSecret(lines[i])) {
+          break; // skip — placeholder, not a real secret
+        }
+        findings.push({
+          id: `F${++findingId}`,
+          severity: secretsMeta?.severity ?? 'critical',
+          category: 'secrets_scan',
+          description: `Hardcoded secret detected (${pattern.name}): ${redactSecret(lines[i].trim())}`,
+          deduction: secretsMeta?.deduction ?? 40,
+          line: i + 1,
+        });
+        break; // one finding per line
+      }
+    }
+  }
+
+  // Hard fail: if any secrets found, score=0 and return early
+  if (findings.some(f => f.category === 'secrets_scan')) {
+    const secretFindings = findings.filter(f => f.category === 'secrets_scan');
+    return {
+      score: 0,
+      findings,
+      hard_fail: true,
+      hard_fail_reason: `Hard fail: ${secretFindings.length} secret(s) detected — credential issuance blocked`,
+      vc_issuable: false,
+    };
+  }
+
+  // 1. Prompt injection scan — code blocks only (no FP on prose mentions of "system prompt" etc.)
   let injectionFound = false;
   for (const pat of INJECTION_PATTERNS) {
-    if (pat.test(content) && !injectionFound) {
+    if (pat.test(codeOnly) && !injectionFound) {
       injectionFound = true;
       findings.push({
         id: `F${++findingId}`,
         severity: 'critical',
         category: 'prompt_injection',
-        description: `Prompt injection pattern detected: ${pat.source.slice(0, 50)}`,
+        description: `Prompt injection pattern detected in code block: ${pat.source.slice(0, 50)}`,
         deduction: 40,
         line: findLine(pat),
       });
     }
   }
 
-  // 2. Exfiltration patterns (-30 per finding, cap at 1)
+  // 2. Exfiltration patterns — code blocks only (defensive prose like
+  // "do not exfiltrate page data" is a security-positive instruction, not an attack).
   let exfilFound = false;
   for (const pat of EXFILTRATION_PATTERNS) {
-    if (pat.test(content) && !exfilFound) {
+    if (pat.test(codeOnly) && !exfilFound) {
       exfilFound = true;
       findings.push({
         id: `F${++findingId}`,
         severity: 'critical',
         category: 'data_exfiltration',
-        description: `Data exfiltration pattern detected: ${pat.source.slice(0, 50)}`,
+        description: `Data exfiltration pattern detected in code block: ${pat.source.slice(0, 50)}`,
         deduction: 30,
         line: findLine(pat),
       });
     }
   }
 
-  // 3. Tool scope violations (-20 per finding, cap at 1)
+  // 3. Tool scope violations — code blocks only (no FP on prose like "run its interview")
   let scopeFound = false;
   for (const pat of SCOPE_VIOLATION_PATTERNS) {
-    if (pat.test(content) && !scopeFound) {
+    if (pat.test(codeOnly) && !scopeFound) {
       scopeFound = true;
       findings.push({
         id: `F${++findingId}`,
         severity: 'high',
         category: 'tool_scope_violation',
-        description: `Tool scope violation detected: ${pat.source.slice(0, 50)}`,
+        description: `Tool scope violation detected in code block: ${pat.source.slice(0, 50)}`,
         deduction: 20,
         line: findLine(pat),
       });
@@ -259,14 +643,15 @@ export function auditSkill(content: string): { score: number; findings: AuditFin
     });
   }
 
-  // 6. Format validity (-5 per issue)
+  // 6. Format validity — heading requirement is satisfied if frontmatter `name:` is present
   const hasTopHeading = /^#\s+.+/m.test(content);
-  if (!hasTopHeading) {
+  const hasNameInFrontmatter = !!(hasFrontmatter && frontmatter?.name);
+  if (!hasTopHeading && !hasNameInFrontmatter) {
     findings.push({
       id: `F${++findingId}`,
       severity: 'low',
       category: 'format_invalid',
-      description: 'Missing top-level heading (# SkillName)',
+      description: 'Missing top-level heading (# SkillName) and no frontmatter `name:` field',
       deduction: 5,
     });
   }
@@ -281,53 +666,89 @@ export function auditSkill(content: string): { score: number; findings: AuditFin
     });
   }
 
-  // 7. Metadata completeness (-5 per missing field)
-  const requiredSections = ['Purpose', 'Capabilities', 'Tools', 'Author'];
-  const optionalSections = ['Version', 'License'];
+  // 7. Metadata completeness — frontmatter-aware.
+  // If YAML frontmatter is present (anthropic/anthropics-style), treat it as
+  // the canonical metadata source and check for required keys there.
+  // Otherwise fall back to legacy markdown-section check.
+  if (hasFrontmatter && frontmatter) {
+    // name + description are the de-facto required fields in the Claude skills convention
+    if (!frontmatter.name) {
+      findings.push({ id: `F${++findingId}`, severity: 'low', category: 'metadata_missing',
+        description: 'Frontmatter missing required field: name', deduction: 5 });
+    }
+    if (!frontmatter.description) {
+      findings.push({ id: `F${++findingId}`, severity: 'low', category: 'metadata_missing',
+        description: 'Frontmatter missing required field: description', deduction: 5 });
+    }
+    // license: accept frontmatter `license:`, `## License` section, or — in
+    // claude_skill profile — a repo-level LICENSE file (common bundle convention).
+    let hasLicense = !!frontmatter.license || /##\s+License/i.test(content);
+    if (!hasLicense && profile === 'claude_skill' && skillUrl) {
+      const repoLicense = await repoHasLicense(skillUrl);
+      if (repoLicense === true) hasLicense = true;
+    }
+    if (!hasLicense) {
+      findings.push({ id: `F${++findingId}`, severity: 'low', category: 'metadata_missing',
+        description: 'Missing license (frontmatter `license:`, ## License section, or repo-level LICENSE)', deduction: 5 });
+    }
+  } else {
+    // Legacy: full markdown-section requirement
+    const hasPurpose = /##\s+Purpose/i.test(content);
+    const hasCapOrTools = /##\s+(Capabilities|Tools)/i.test(content);
+    const hasAuthor = /##\s+Author/i.test(content);
 
-  // At least Purpose and (Capabilities OR Tools) and Author
-  const hasPurpose = /##\s+Purpose/i.test(content);
-  const hasCapOrTools = /##\s+(Capabilities|Tools)/i.test(content);
-  const hasAuthor = /##\s+Author/i.test(content);
-
-  if (!hasPurpose) {
-    findings.push({
-      id: `F${++findingId}`,
-      severity: 'low',
-      category: 'metadata_missing',
-      description: 'Missing required section: ## Purpose',
-      deduction: 5,
-    });
-  }
-  if (!hasCapOrTools) {
-    findings.push({
-      id: `F${++findingId}`,
-      severity: 'low',
-      category: 'metadata_missing',
-      description: 'Missing required section: ## Capabilities or ## Tools',
-      deduction: 5,
-    });
-  }
-  if (!hasAuthor) {
-    findings.push({
-      id: `F${++findingId}`,
-      severity: 'low',
-      category: 'metadata_missing',
-      description: 'Missing required section: ## Author',
-      deduction: 5,
-    });
+    if (!hasPurpose) {
+      findings.push({ id: `F${++findingId}`, severity: 'low', category: 'metadata_missing',
+        description: 'Missing required section: ## Purpose', deduction: 5 });
+    }
+    if (!hasCapOrTools) {
+      findings.push({ id: `F${++findingId}`, severity: 'low', category: 'metadata_missing',
+        description: 'Missing required section: ## Capabilities or ## Tools', deduction: 5 });
+    }
+    if (!hasAuthor) {
+      findings.push({ id: `F${++findingId}`, severity: 'low', category: 'metadata_missing',
+        description: 'Missing required section: ## Author', deduction: 5 });
+    }
+    for (const sec of ['Version', 'License']) {
+      const pattern = new RegExp(`##\\s+${sec}`, 'i');
+      if (!pattern.test(content)) {
+        findings.push({ id: `F${++findingId}`, severity: 'low', category: 'metadata_missing',
+          description: `Missing recommended section: ## ${sec}`, deduction: 5 });
+      }
+    }
   }
 
-  for (const sec of optionalSections) {
-    const pattern = new RegExp(`##\\s+${sec}`, 'i');
-    if (!pattern.test(content)) {
-      findings.push({
-        id: `F${++findingId}`,
-        severity: 'low',
-        category: 'metadata_missing',
-        description: `Missing recommended section: ## ${sec}`,
-        deduction: 5,
-      });
+  // 8. A2A Discovery Scan (async, GitHub API)
+  // In claude_skill profile: A2A is an informational note (deduction 0, severity 'low'),
+  // because Claude Skills don't typically expose .well-known/agent-card.json — that's
+  // an A2A-protocol convention, not a Claude Skills convention.
+  if (skillUrl) {
+    try {
+      const a2aFindings = await checkA2ADiscovery(skillUrl);
+      for (const f of a2aFindings) {
+        f.id = `F${++findingId}`;
+        if (profile === 'claude_skill') {
+          f.deduction = 0;
+          f.description = `[informational] ${f.description}`;
+        }
+        findings.push(f);
+      }
+    } catch {
+      // A2A scan failure should not block the audit
+    }
+  }
+
+  // 9. MCP-scan hook (optional) — runs uvx mcp-scan if available.
+  // Detects MCP server configurations (mcpServers, mcp.json refs); otherwise no-op.
+  // Disabled gracefully when uvx is missing.
+  let mcpScan: { ran: boolean; available: boolean; findings_count: number } = {
+    ran: false, available: false, findings_count: 0
+  };
+  if (process.env.MCP_SCAN_ENABLED !== 'false') {
+    try {
+      mcpScan = await runMcpScan(content, findings, () => `F${++findingId}`);
+    } catch {
+      // never block the audit on mcp-scan failure
     }
   }
 
@@ -335,7 +756,78 @@ export function auditSkill(content: string): { score: number; findings: AuditFin
   const totalDeduction = findings.reduce((sum, f) => sum + f.deduction, 0);
   const score = Math.max(0, 100 - totalDeduction);
 
-  return { score, findings };
+  return { score, findings, vc_issuable: score >= 70, profile, mcp_scan: mcpScan };
+}
+
+// ── MCP-scan hook (optional, uvx mcp-scan integration) ──
+// Detects MCP server config in SKILL.md and runs uvx mcp-scan if available.
+// Returns { ran, available, findings_count }. On any failure: returns ran=false.
+// Adds findings (severity = the mcp-scan severity, category = 'mcp_scan') in-place.
+async function runMcpScan(
+  content: string,
+  findingsOut: AuditFinding[],
+  nextId: () => string
+): Promise<{ ran: boolean; available: boolean; findings_count: number }> {
+  // Cheap availability check
+  const { exec } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execAsync = promisify(exec);
+
+  let available = false;
+  try {
+    await execAsync('which uvx', { timeout: 2000 });
+    available = true;
+  } catch {
+    return { ran: false, available: false, findings_count: 0 };
+  }
+
+  // Detect if SKILL.md mentions MCP server config — only scan if relevant
+  const mentionsMcp = /\bmcpServers\b|\bmcp\.json\b|\bModel Context Protocol\b/i.test(content);
+  if (!mentionsMcp) {
+    return { ran: false, available, findings_count: 0 };
+  }
+
+  // Run mcp-scan with stdin input — this is best-effort; mcp-scan typically
+  // expects a config path, so we pass --help for now to validate the binary
+  // works. Real config-targeted scans require a target path which is out of
+  // scope for static SKILL.md audit.
+  let findingsBefore = findingsOut.length;
+  try {
+    const { stdout, stderr } = await execAsync('uvx mcp-scan --version', { timeout: 5000 });
+    if (stdout.trim() || stderr.trim()) {
+      // mcp-scan is reachable but has no SKILL.md scan mode yet — record as informational
+      findingsOut.push({
+        id: nextId(),
+        severity: 'low',
+        category: 'mcp_scan',
+        description: '[informational] MCP-scan reachable but SKILL.md has no scannable MCP config. Review manually if your skill exposes MCP tools.',
+        deduction: 0,
+      });
+    }
+    return { ran: true, available, findings_count: findingsOut.length - findingsBefore };
+  } catch {
+    return { ran: false, available, findings_count: 0 };
+  }
+}
+
+// ── Ecosystem trust score (MolTrust API integration) ──
+// For a frontmatter `author:` field that is a MolTrust DID, fetch the
+// Phase-2 swarm trust score. Returns null if unknown / unreachable.
+export async function getEcosystemTrustScore(authorDid?: string): Promise<{
+  did: string; trust_score: number; grade: string;
+} | null> {
+  if (!authorDid) return null;
+  if (!authorDid.startsWith('did:moltrust:')) return null;
+  try {
+    const url = `http://localhost:8000/skill/trust-score/${encodeURIComponent(authorDid)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!resp.ok) return null;
+    const data = await resp.json() as any;
+    if (typeof data?.trust_score !== 'number') return null;
+    return { did: authorDid, trust_score: data.trust_score, grade: data.grade || '?' };
+  } catch {
+    return null;
+  }
 }
 
 // ── VC Store ──

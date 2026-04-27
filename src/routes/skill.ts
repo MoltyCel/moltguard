@@ -12,6 +12,12 @@ import {
   anchorSkillVC,
   storeVC,
   getAnchorInfo,
+  CHECK_REGISTRY,
+  computeRegistryChecksum,
+  parseFrontmatter,
+  getEcosystemTrustScore,
+  AUDITOR_VERSION,
+  type AuditProfile,
 } from '../services/skill.js';
 
 const app = new Hono();
@@ -21,6 +27,7 @@ app.get('/skill/info', (c) => {
   return c.json({
     service: 'MT Skill Verification',
     version: '1.0.0',
+    auditorVersion: AUDITOR_VERSION,
     description: 'Cryptographic trust infrastructure for AI agent skills. Audits SKILL.md for security risks and issues VerifiedSkillCredentials anchored on Base.',
     documentation: 'https://moltrust.ch/skills.html',
     endpoints: {
@@ -62,8 +69,11 @@ app.get('/skill/schema', (c) => {
 });
 
 // Free (rate-limited): audit a skill from GitHub
+// Optional ?profile=claude_skill to apply Claude-skills-specific rules
+// (a2a_discovery_scan downgrades to informational).
 app.get('/skill/audit', async (c) => {
   const url = c.req.query('url');
+  const profileParam = c.req.query('profile');
   if (!url) {
     return c.json({ error: 'missing_param', message: 'url query parameter is required (GitHub URL)' }, 400);
   }
@@ -72,6 +82,9 @@ app.get('/skill/audit', async (c) => {
   if (!url.startsWith('https://')) {
     return c.json({ error: 'invalid_url', message: 'HTTPS URL required' }, 400);
   }
+
+  // Validate profile
+  const profile: AuditProfile = profileParam === 'claude_skill' ? 'claude_skill' : 'default';
 
   // Rate limit: 5 per hour per IP
   const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
@@ -84,19 +97,31 @@ app.get('/skill/audit', async (c) => {
   try {
     const { content, name, version } = await fetchSkillMd(url);
     const skillHash = canonicalSkillHash(content);
-    const audit = auditSkill(content);
+    const audit = await auditSkill(content, url, profile);
+
+    // Ecosystem trust score: derived from frontmatter `author:` if it's a MolTrust DID.
+    // This is the genuine MolTrust differentiator — a cross-vertical reputation signal
+    // that linters can't provide.
+    const fm = parseFrontmatter(content);
+    const ecosystemTrust = await getEcosystemTrustScore(fm?.author);
 
     return c.json({
       skillName: name,
       skillVersion: version,
       skillHash,
       repositoryUrl: url,
+      profile,
       audit: {
         score: audit.score,
         findings: audit.findings,
-        auditorVersion: '1.0.0',
+        auditorVersion: '1.2.0',
+        ...(audit.hard_fail !== undefined && { hard_fail: audit.hard_fail }),
+        ...(audit.hard_fail_reason && { hard_fail_reason: audit.hard_fail_reason }),
+        ...(audit.vc_issuable !== undefined && { vc_issuable: audit.vc_issuable }),
+        ...(audit.mcp_scan && { mcp_scan: audit.mcp_scan }),
       },
-      passed: audit.score >= 70,
+      ecosystem_trust_score: ecosystemTrust, // null if author DID unknown / not a MolTrust DID
+      passed: audit.score >= 70 && !audit.hard_fail,
     });
   } catch (e: any) {
     return c.json({ error: 'audit_failed', message: e.message }, 500);
@@ -122,7 +147,16 @@ app.post('/vc/skill/issue', async (c) => {
     // Fetch and audit
     const { content, name, version } = await fetchSkillMd(repositoryUrl);
     const skillHash = canonicalSkillHash(content);
-    const audit = auditSkill(content);
+    const audit = await auditSkill(content, repositoryUrl);
+
+    if (audit.hard_fail) {
+      return c.json({
+        error: 'hard_fail',
+        message: audit.hard_fail_reason || 'Audit hard fail — credential issuance blocked',
+        audit: { score: 0, findings: audit.findings },
+        passed: false,
+      }, 403);
+    }
 
     if (audit.score < 70) {
       return c.json({
@@ -221,4 +255,25 @@ app.get('/skill/anchor/:skillHash', async (c) => {
   });
 });
 
+
+// GET /audit/checks — full check registry with all metadata
+app.get("/audit/checks", (c) => {
+  return c.json({
+    version: AUDITOR_VERSION,
+    check_count: CHECK_REGISTRY.length,
+    checksum: computeRegistryChecksum(),
+    generated_at: new Date().toISOString(),
+    checks: CHECK_REGISTRY,
+  });
+});
+
+// GET /audit/version — lightweight drift-check
+app.get("/audit/version", (c) => {
+  return c.json({
+    version: AUDITOR_VERSION,
+    check_count: CHECK_REGISTRY.length,
+    checksum: computeRegistryChecksum(),
+    generated_at: new Date().toISOString(),
+  });
+});
 export default app;
