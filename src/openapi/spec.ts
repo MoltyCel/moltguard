@@ -482,6 +482,32 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'Generic VC issuance result. Specific VC type returned per request body.',
         additionalProperties: true,
       },
+      ShoppingReceipt: {
+        type: 'object',
+        description: 'Issued BuyerAgentCredential receipt — public form (no PII).',
+        additionalProperties: true,
+        properties: {
+          receiptId: { type: 'string' },
+          credential_type: { type: 'string', enum: ['BuyerAgentCredential'] },
+          issuanceDate: { type: 'string', format: 'date-time' },
+        },
+      },
+      ShoppingVerifyResult: {
+        type: 'object',
+        description: '10-step buyer-agent VC verification result.',
+        additionalProperties: true,
+        properties: {
+          verified: { type: 'boolean' },
+          trustScore: { type: 'integer' },
+          decision: { type: 'string', enum: ['approve','review','reject'] },
+          reasons: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      BuyerAgentCredential: {
+        type: 'object',
+        description: 'Issued BuyerAgentCredential (W3C VC).',
+        additionalProperties: true,
+      },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -925,6 +951,60 @@ export const spec: OpenAPIV3_1.Document = {
         },
         responses: {
           '200': { description: 'Verification result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/CredentialVerifyResult' } } } },
+        },
+      },
+    },
+    '/shopping/info': {
+      get: {
+        tags: ['shopping-vc'],
+        summary: 'MT Shopping service info',
+        operationId: 'getShoppingInfo',
+        responses: { '200': { description: 'Info', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } },
+      },
+    },
+    '/shopping/receipt/{id}': {
+      get: {
+        tags: ['shopping-vc'],
+        summary: 'Get an issued BuyerAgentCredential receipt by id',
+        operationId: 'getShoppingReceipt',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Receipt', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ShoppingReceipt' } } } },
+        },
+      },
+    },
+    '/shopping/schema': {
+      get: {
+        tags: ['shopping-vc'],
+        summary: 'BuyerAgentCredential schema document',
+        operationId: 'getShoppingSchema',
+        responses: { '200': { description: 'Schema', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } },
+      },
+    },
+    '/shopping/verify': {
+      post: {
+        tags: ['shopping-vc'],
+        summary: 'Verify a BuyerAgentCredential (10-step pipeline, free)',
+        operationId: 'verifyShopping',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: {
+          '200': { description: 'Verify result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ShoppingVerifyResult' } } } },
+        },
+      },
+    },
+    '/vc/buyer-agent/issue': {
+      post: {
+        tags: ['shopping-vc'],
+        summary: 'Issue a BuyerAgentCredential (paid)',
+        operationId: 'issueBuyerAgentVC',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '5.00', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCIssueRequestBase' } } } },
+        responses: {
+          '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/BuyerAgentCredential' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
         },
       },
     },
