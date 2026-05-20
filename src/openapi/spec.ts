@@ -463,6 +463,25 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'Base body for a VC issuance request. Specific VC types extend with type-specific fields.',
         additionalProperties: true,
       },
+      CredentialVerifyResult: {
+        type: 'object',
+        description: 'W3C VC + AAE delegation chain verification result.',
+        properties: {
+          verified: { type: 'boolean' },
+          credential: { type: ['object', 'null'], additionalProperties: true },
+          aae: {
+            type: 'object',
+            description: 'AAE evaluation, if envelope present',
+            additionalProperties: true,
+          },
+          errors: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      CredentialIssueResult: {
+        type: 'object',
+        description: 'Generic VC issuance result. Specific VC type returned per request body.',
+        additionalProperties: true,
+      },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -878,6 +897,34 @@ export const spec: OpenAPIV3_1.Document = {
         responses: {
           '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/VerifiedSkillCredential' } } } },
           '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        },
+      },
+    },
+    '/api/credential/issue': {
+      post: {
+        tags: ['credential-issuance'],
+        summary: 'Issue a generic W3C Verifiable Credential (paid)',
+        operationId: 'issueCredential',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCIssueRequestBase' } } } },
+        responses: {
+          '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/CredentialIssueResult' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        },
+      },
+    },
+    '/api/credential/verify': {
+      post: {
+        tags: ['credential-issuance'],
+        summary: 'Verify a W3C VC + AAE delegation chain (free)',
+        operationId: 'verifyCredential',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', additionalProperties: true, description: 'VC to verify (full credentialSubject + proof)' } } },
+        },
+        responses: {
+          '200': { description: 'Verification result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/CredentialVerifyResult' } } } },
         },
       },
     },
