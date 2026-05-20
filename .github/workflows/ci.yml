@@ -1,6 +1,10 @@
 # MoltGuard CI — minimal V1.
 # Per moltguard-remote-migration SPEC §3.5 + §9.4 RESOLVED (no linting V1).
 # Establishes type-check (tsc) + test (vitest) on push to main and on PRs.
+#
+# Actions pinned to commit SHA per §2.3 cross-review (P8 PR #1, 2026-05-20)
+# supply-chain-risk finding. Version-tag comments next to each pin.
+# Rotate SHAs when bumping major version; track via planned Dependabot setup.
 
 name: CI
 
@@ -23,10 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
