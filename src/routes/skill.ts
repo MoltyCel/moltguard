@@ -87,8 +87,8 @@ app.get('/skill/audit', async (c) => {
   const profile: AuditProfile = profileParam === 'claude_skill' ? 'claude_skill' : 'default';
 
   // Rate limit: 5 per hour per IP
-  const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-    || c.req.header('x-real-ip')
+  const ip = c.req.header('x-real-ip')
+    || c.req.header('x-forwarded-for')?.split(',').pop()?.trim()
     || 'unknown';
   if (!checkAuditRateLimit(ip)) {
     return c.json({ error: 'rate_limited', message: 'Audit rate limit: 5 per hour. Try again later.' }, 429);
