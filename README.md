@@ -62,3 +62,44 @@ docker compose up --build
 ## License
 
 MIT — CryptoKRI GmbH / MolTrust
+
+## Build & Run
+
+```bash
+npm install
+npm run build       # tsc → dist/
+npm start           # node dist/index.js (defaults to port 3003)
+```
+
+For development with auto-reload:
+```bash
+npm run dev
+```
+
+Typical environment variables (set in `.env`, see `.env.example`):
+- `X402_ENABLED=true` — enable x402 payment middleware
+- `MOLTGUARD_WALLET=0x…` — wallet that receives x402 payments (Base USDC)
+- `JWT_SECRET=…` — internal JWT signing key
+- `DATABASE_URL=postgresql://…` — Postgres connection
+- `FACILITATOR_URL=https://x402.org/facilitator` — x402 facilitator (default shown)
+
+## Tests
+
+```bash
+npm test            # vitest run
+```
+
+## Discovery
+
+MoltGuard exposes its full endpoint inventory + JSON Schemas at
+[`/openapi.json`](https://api.moltrust.ch/guard/openapi.json) (OpenAPI 3.1),
+plus a human-readable self-doc at [`/api/info`](https://api.moltrust.ch/guard/api/info).
+The parent service [api.moltrust.ch](https://api.moltrust.ch) cross-references MoltGuard
+via the `moltguard/v1` and `x402-pricing/v1` extensions in its
+[`extendedAgentCard`](https://api.moltrust.ch/extendedAgentCard) (auth-gated).
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [`LICENSE`](./LICENSE) for the full text.
+
+Copyright 2026 CryptoKRI GmbH, Zurich (MolTrust).

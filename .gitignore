@@ -2,3 +2,12 @@ node_modules/
 dist/
 .env
 *.log
+
+# Backup snapshots — use ~/moltguard/.attic/ for server-local rotations (see migration SPEC §3.1)
+*.bak
+*.bak-*
+.attic/
+
+# Test outputs / caches
+coverage/
+.vitest-cache/
