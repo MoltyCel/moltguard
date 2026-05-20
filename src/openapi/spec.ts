@@ -385,6 +385,84 @@ export const spec: OpenAPIV3_1.Document = {
           },
         },
       },
+      SkillInfo: {
+        type: 'object',
+        description: 'Skill-verification service info: capabilities, pricing, endpoint pointers.',
+        additionalProperties: true,
+      },
+      SkillSchema: {
+        type: 'object',
+        description: 'VerifiedSkillCredential JSON-LD schema doc.',
+        additionalProperties: true,
+      },
+      SkillAuditResult: {
+        type: 'object',
+        description: 'GitHub-repo skill audit result. 8 security/integrity checks, deductive scoring from 100.',
+        properties: {
+          repositoryUrl: { type: 'string' },
+          score: { type: 'integer', minimum: 0, maximum: 100 },
+          findings: { type: 'array', items: { '$ref': '#/components/schemas/AuditFinding' } },
+          auditorVersion: { type: 'string' },
+          passedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      AuditFinding: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          severity: { type: 'string', enum: ['critical','high','medium','low','info'] },
+          category: { type: 'string' },
+          description: { type: 'string' },
+          deduction: { type: 'integer' },
+          line: { type: 'integer' },
+        },
+      },
+      SkillVerifyResult: {
+        type: 'object',
+        description: 'Verification of an issued VerifiedSkillCredential by skillHash or DID.',
+        properties: {
+          verified: { type: 'boolean' },
+          skillHash: { type: 'string' },
+          credential: { type: ['object', 'null'], additionalProperties: true },
+          anchor_tx: { type: ['string', 'null'] },
+          issuanceDate: { type: ['string', 'null'], format: 'date-time' },
+        },
+      },
+      SkillAnchorResult: {
+        type: 'object',
+        description: 'On-chain anchor lookup for a skillHash.',
+        properties: {
+          skillHash: { type: 'string' },
+          anchored: { type: 'boolean' },
+          tx: { type: ['string', 'null'] },
+          block: { type: ['integer', 'null'] },
+          network: { type: 'string', example: 'base' },
+        },
+      },
+      AuditChecks: {
+        type: 'object',
+        description: 'List of audit checks performed by the skill auditor.',
+        additionalProperties: true,
+      },
+      AuditVersion: {
+        type: 'object',
+        description: 'Auditor version metadata. Used by CONFORMANCE drift-check.',
+        properties: {
+          version: { type: 'string', example: '1.2.0' },
+          rules: { type: 'integer' },
+          patterns: { type: 'integer' },
+        },
+      },
+      VerifiedSkillCredential: {
+        type: 'object',
+        description: 'Issued W3C VC — VerifiedSkillCredential type.',
+        additionalProperties: true,
+      },
+      VCIssueRequestBase: {
+        type: 'object',
+        description: 'Base body for a VC issuance request. Specific VC types extend with type-specific fields.',
+        additionalProperties: true,
+      },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -695,6 +773,111 @@ export const spec: OpenAPIV3_1.Document = {
         responses: {
           '200': { description: 'Events feed', content: { 'application/json': { schema: { '$ref': '#/components/schemas/EventsFeedResult' } } } },
           '404': { description: 'Scan has not run yet', content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/audit/checks': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'List of audit checks the skill auditor runs',
+        operationId: 'getAuditChecks',
+        responses: {
+          '200': { description: 'Checks listing', content: { 'application/json': { schema: { '$ref': '#/components/schemas/AuditChecks' } } } },
+        },
+      },
+    },
+    '/audit/version': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'Auditor version metadata (used by CONFORMANCE drift-check)',
+        operationId: 'getAuditVersion',
+        responses: {
+          '200': { description: 'Version', content: { 'application/json': { schema: { '$ref': '#/components/schemas/AuditVersion' } } } },
+        },
+      },
+    },
+    '/skill/anchor/{skillHash}': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'On-chain anchor lookup for a skillHash',
+        operationId: 'getSkillAnchor',
+        parameters: [
+          { name: 'skillHash', in: 'path', required: true, schema: { type: 'string' }, description: 'sha256 hash (with or without "sha256:" prefix)' },
+        ],
+        responses: {
+          '200': { description: 'Anchor lookup result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SkillAnchorResult' } } } },
+        },
+      },
+    },
+    '/skill/audit': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'Audit a GitHub repo for skill integrity (free, rate-limited 5/hr)',
+        description: '8-point security audit (canonicalized auditor v1.2.0). Deductive scoring 100 → findings. Rate-limited 5 requests per hour per IP.',
+        operationId: 'getSkillAudit',
+        parameters: [
+          { name: 'url', in: 'query', required: true, schema: { type: 'string', format: 'uri' }, description: 'GitHub repository URL' },
+          { name: 'profile', in: 'query', required: false, schema: { type: 'string' }, description: 'Optional audit profile' },
+        ],
+        responses: {
+          '200': { description: 'Audit result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SkillAuditResult' } } } },
+          '429': { description: 'Rate limit exceeded', content: { 'application/json': { schema: { '$ref': '#/components/schemas/RateLimitError' } } } },
+        },
+      },
+    },
+    '/skill/info': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'Skill-verification service info',
+        operationId: 'getSkillInfo',
+        responses: { '200': { description: 'Info', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SkillInfo' } } } } },
+      },
+    },
+    '/skill/schema': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'VerifiedSkillCredential schema document',
+        operationId: 'getSkillSchema',
+        responses: { '200': { description: 'Schema', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SkillSchema' } } } } },
+      },
+    },
+    '/skill/verify/did/{did}': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'Verify skill credentials issued to a DID',
+        operationId: 'verifySkillByDid',
+        parameters: [
+          { name: 'did', in: 'path', required: true, schema: { type: 'string' }, description: 'URL-encoded DID' },
+        ],
+        responses: { '200': { description: 'Verification result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SkillVerifyResult' } } } } },
+      },
+    },
+    '/skill/verify/{skillHash}': {
+      get: {
+        tags: ['skill-verification'],
+        summary: 'Verify a skill credential by skillHash',
+        operationId: 'verifySkillByHash',
+        parameters: [
+          { name: 'skillHash', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Verification result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SkillVerifyResult' } } } } },
+      },
+    },
+    '/vc/skill/issue': {
+      post: {
+        tags: ['skill-verification'],
+        summary: 'Issue a VerifiedSkillCredential (paid)',
+        description: 'Premium VC issuance. Anchors hash on-chain (Base L2). Returns W3C VC with Ed25519 JWS proof.',
+        operationId: 'issueSkillVC',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '5.00', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCIssueRequestBase' } } },
+        },
+        responses: {
+          '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/VerifiedSkillCredential' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
         },
       },
     },
