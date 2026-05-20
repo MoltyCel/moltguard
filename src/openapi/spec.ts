@@ -512,6 +512,8 @@ export const spec: OpenAPIV3_1.Document = {
       TravelTrip: { type: 'object', additionalProperties: true, properties: { tripId: { type: 'string' } } },
       TravelVerifyResult: { type: 'object', additionalProperties: true, properties: { verified: { type: 'boolean' } } },
       TravelAgentCredential: { type: 'object', additionalProperties: true, description: 'Issued TravelAgentCredential (W3C VC).' },
+      SalesguardRegResult: { type: 'object', additionalProperties: true, properties: { ok: { type: 'boolean' }, id: { type: 'string' } } },
+      SalesguardVerifyResult: { type: 'object', additionalProperties: true, properties: { verified: { type: 'boolean' }, provenance: { type: 'object', additionalProperties: true } } },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -1045,6 +1047,31 @@ export const spec: OpenAPIV3_1.Document = {
           '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
         },
       },
+    },
+    '/salesguard/brand/register': {
+      post: { tags: ['salesguard'], summary: 'Register a brand', operationId: 'registerBrand',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Registered', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SalesguardRegResult' } } } } } },
+    },
+    '/salesguard/product/register': {
+      post: { tags: ['salesguard'], summary: 'Register a product (ProductProvenanceCredential)', operationId: 'registerProduct',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Registered', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SalesguardRegResult' } } } } } },
+    },
+    '/salesguard/reseller/authorize': {
+      post: { tags: ['salesguard'], summary: 'Authorize a reseller (AuthorizedResellerCredential)', operationId: 'authorizeReseller',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Authorized', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SalesguardRegResult' } } } } } },
+    },
+    '/salesguard/reseller/verify/{reseller_did}': {
+      get: { tags: ['salesguard'], summary: 'Verify a reseller is authorized for a brand/product', operationId: 'verifyReseller',
+        parameters: [{ name: 'reseller_did', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Verify result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SalesguardVerifyResult' } } } } } },
+    },
+    '/salesguard/verify/{product_id}': {
+      get: { tags: ['salesguard'], summary: 'Verify a product provenance', operationId: 'verifyProduct',
+        parameters: [{ name: 'product_id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Verify result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SalesguardVerifyResult' } } } } } },
     },
   },
   tags: [
