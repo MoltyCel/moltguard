@@ -514,6 +514,11 @@ export const spec: OpenAPIV3_1.Document = {
       TravelAgentCredential: { type: 'object', additionalProperties: true, description: 'Issued TravelAgentCredential (W3C VC).' },
       SalesguardRegResult: { type: 'object', additionalProperties: true, properties: { ok: { type: 'boolean' }, id: { type: 'string' } } },
       SalesguardVerifyResult: { type: 'object', additionalProperties: true, properties: { verified: { type: 'boolean' }, provenance: { type: 'object', additionalProperties: true } } },
+      PredictionWalletLink: { type: 'object', additionalProperties: true, properties: { ok: { type: 'boolean' }, did: { type: 'string' }, address: { type: 'string' } } },
+      PredictionWalletInfo: { type: 'object', additionalProperties: true, properties: { address: { type: 'string' }, linkedDid: { type: ['string','null'] } } },
+      PredictionLeaderboard: { type: 'array', items: { type: 'object', additionalProperties: true, properties: { did: { type: 'string' }, score: { type: 'number' }, rank: { type: 'integer' } } } },
+      PredictionIntegrity: { type: 'object', additionalProperties: true, properties: { marketId: { type: 'string' }, integrityScore: { type: 'integer' }, flags: { type: 'array', items: { type: 'string' } } } },
+      PredictionTrackCredential: { type: 'object', additionalProperties: true, description: 'Issued PredictionTrackCredential (W3C VC) — wallet-DID bridge with on-chain track record.' },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -1072,6 +1077,43 @@ export const spec: OpenAPIV3_1.Document = {
       get: { tags: ['salesguard'], summary: 'Verify a product provenance', operationId: 'verifyProduct',
         parameters: [{ name: 'product_id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'Verify result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SalesguardVerifyResult' } } } } } },
+    },
+    '/prediction/integrity/{market_id}': {
+      get: { tags: ['prediction-markets'], summary: 'Prediction-market integrity check (paid)',
+        description: 'Polymarket/Kalshi market integrity — outcome anomalies, oracle drift, statistical irregularities. Prefix-matched in x402-prices.',
+        operationId: 'getPredictionIntegrity',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        parameters: [{ name: 'market_id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Integrity result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionIntegrity' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        } },
+    },
+    '/prediction/leaderboard': {
+      get: { tags: ['prediction-markets'], summary: 'Prediction track leaderboard (free)', operationId: 'getPredictionLeaderboard',
+        responses: { '200': { description: 'Leaderboard', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionLeaderboard' } } } } } },
+    },
+    '/prediction/wallet-link': {
+      post: { tags: ['prediction-markets'], summary: 'Link an EVM wallet to a DID for prediction-track attribution', operationId: 'linkPredictionWallet',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Linked', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionWalletLink' } } } } } },
+    },
+    '/prediction/wallet/{address}': {
+      get: { tags: ['prediction-markets'], summary: 'Look up wallet → DID linkage', operationId: 'getPredictionWallet',
+        parameters: [{ name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' } }],
+        responses: { '200': { description: 'Wallet info', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionWalletInfo' } } } } } },
+    },
+    '/vc/prediction/issue': {
+      post: { tags: ['prediction-markets'], summary: 'Issue a PredictionTrackCredential (paid)',
+        operationId: 'issuePredictionVC',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '5.00', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCIssueRequestBase' } } } },
+        responses: {
+          '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionTrackCredential' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        } },
     },
   },
   tags: [
