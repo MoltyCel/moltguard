@@ -519,6 +519,9 @@ export const spec: OpenAPIV3_1.Document = {
       PredictionLeaderboard: { type: 'array', items: { type: 'object', additionalProperties: true, properties: { did: { type: 'string' }, score: { type: 'number' }, rank: { type: 'integer' } } } },
       PredictionIntegrity: { type: 'object', additionalProperties: true, properties: { marketId: { type: 'string' }, integrityScore: { type: 'integer' }, flags: { type: 'array', items: { type: 'string' } } } },
       PredictionTrackCredential: { type: 'object', additionalProperties: true, description: 'Issued PredictionTrackCredential (W3C VC) — wallet-DID bridge with on-chain track record.' },
+      GraphScoreEdge: { type: 'object', additionalProperties: true, properties: { fromDid: { type: 'string' }, toDid: { type: 'string' }, score: { type: 'number' }, edgeType: { type: 'string' } } },
+      GraphNeighbours: { type: 'object', additionalProperties: true, properties: { did: { type: 'string' }, neighbours: { type: 'array', items: { type: 'object', additionalProperties: true } } } },
+      GraphStats: { type: 'object', additionalProperties: true, properties: { totalNodes: { type: 'integer' }, totalEdges: { type: 'integer' }, avgDegree: { type: 'number' } } },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -1114,6 +1117,23 @@ export const spec: OpenAPIV3_1.Document = {
           '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionTrackCredential' } } } },
           '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
         } },
+    },
+    '/api/graph/neighbours/{did}': {
+      get: { tags: ['agent-graph'], summary: 'Get endorsement-graph neighbours for a DID', operationId: 'getGraphNeighbours',
+        parameters: [{ name: 'did', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Neighbours', content: { 'application/json': { schema: { '$ref': '#/components/schemas/GraphNeighbours' } } } } } },
+    },
+    '/api/graph/score/{fromDid}/{toDid}': {
+      get: { tags: ['agent-graph'], summary: 'Compute graph-based trust score along an endorsement path', operationId: 'getGraphScore',
+        parameters: [
+          { name: 'fromDid', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'toDid', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Score edge', content: { 'application/json': { schema: { '$ref': '#/components/schemas/GraphScoreEdge' } } } } } },
+    },
+    '/api/graph/stats': {
+      get: { tags: ['agent-graph'], summary: 'Aggregate endorsement-graph statistics', operationId: 'getGraphStats',
+        responses: { '200': { description: 'Stats', content: { 'application/json': { schema: { '$ref': '#/components/schemas/GraphStats' } } } } } },
     },
   },
   tags: [
