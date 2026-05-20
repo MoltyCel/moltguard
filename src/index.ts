@@ -26,6 +26,7 @@ import governanceRoutes from './routes/governance.js';
 import hackathonRoutes from './routes/hackathon.js';
 import walletRoutes from './routes/wallet.js';
 import eventsRoutes from './routes/events.js';
+import openapiRoutes from './routes/openapi.js';
 import { authMiddleware } from './middleware/auth.js';
 import { requestLogger } from './middleware/requestLogger.js';
 
@@ -60,6 +61,9 @@ app.route('/', transparencyRoutes);
 
 // Public events feed — Polymarket anomaly + multi_outcome events
 app.route('/', eventsRoutes);
+
+// OpenAPI 3.1 discovery surface (hand-curated; see openapi/spec.ts)
+app.route('/', openapiRoutes);
 
 // Auth middleware for internal routes
 app.use('/internal/*', authMiddleware);
