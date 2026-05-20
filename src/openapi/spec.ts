@@ -324,6 +324,67 @@ export const spec: OpenAPIV3_1.Document = {
           _meta: { '$ref': '#/components/schemas/ScoreMeta' },
         },
       },
+      MarketSample: {
+        type: 'object',
+        description: 'Mock market integrity sample. No real API call.',
+        additionalProperties: true,
+        properties: {
+          marketId: { type: 'string' },
+          integrityScore: { type: 'integer', minimum: 0, maximum: 100 },
+          flags: { type: 'array', items: { type: 'string' } },
+          _meta: { '$ref': '#/components/schemas/ScoreMeta' },
+        },
+      },
+      MarketCheckResult: {
+        type: 'object',
+        description: 'Full market integrity check result (Polymarket/Kalshi).',
+        additionalProperties: true,
+        properties: {
+          marketId: { type: 'string' },
+          integrityScore: { type: 'integer', minimum: 0, maximum: 100 },
+          spreadPct: { type: 'number' },
+          oracleVerified: { type: 'boolean' },
+          flags: { type: 'array', items: { type: 'string' } },
+          _meta: { '$ref': '#/components/schemas/ScoreMeta' },
+        },
+      },
+      MarketFeedResult: {
+        type: 'object',
+        description: 'Aggregated market integrity feed across tracked markets.',
+        additionalProperties: true,
+        properties: {
+          generatedAt: { type: 'string', format: 'date-time' },
+          markets: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        },
+      },
+      EventsFeedResult: {
+        type: 'object',
+        description: 'Polymarket events feed — anomaly + multi_outcome events from MoltGuard scanner. Refreshed every 6h by cron.',
+        properties: {
+          last_scan: { type: 'string', format: 'date-time' },
+          total_events_scanned: { type: 'integer' },
+          anomaly_count: { type: 'integer' },
+          multi_outcome_count: { type: 'integer' },
+          events: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                slug: { type: 'string' },
+                title: { type: 'string' },
+                category: { type: 'string' },
+                flags: { type: 'array', items: { type: 'string' } },
+                volume: { type: 'number' },
+                markets_count: { type: 'integer' },
+                detected_at: { type: 'string', format: 'date-time' },
+                closed_at: { type: 'string', format: 'date-time' },
+                is_live: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -567,6 +628,73 @@ export const spec: OpenAPIV3_1.Document = {
           '200': { description: 'Sybil scan result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SybilScanResponse' } } } },
           '400': { description: 'Invalid 0x address', content: { 'application/json': { schema: { '$ref': '#/components/schemas/InvalidAddressError' } } } },
           '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        },
+      },
+    },
+    '/api/market/check-free/{marketId}': {
+      get: {
+        tags: ['market-integrity'],
+        summary: 'Market integrity check (free, rate-limited 1/10min)',
+        description: 'Free-tier Polymarket/Kalshi integrity check. Rate-limited 1/10min per IP.',
+        operationId: 'getMarketCheckFree',
+        parameters: [
+          { name: 'marketId', in: 'path', required: true, schema: { type: 'string' }, description: 'Polymarket condition_id or Kalshi market slug' },
+        ],
+        responses: {
+          '200': { description: 'Market check result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/MarketCheckResult' } } } },
+          '429': { description: 'Rate limit exceeded', content: { 'application/json': { schema: { '$ref': '#/components/schemas/RateLimitError' } } } },
+        },
+      },
+    },
+    '/api/market/check/{marketId}': {
+      get: {
+        tags: ['market-integrity'],
+        summary: 'Market integrity check (paid)',
+        description: 'Polymarket/Kalshi integrity check — outcome anomalies, oracle manipulation, statistical irregularities.',
+        operationId: 'getMarketCheckPaid',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '0.05', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        parameters: [
+          { name: 'marketId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Market check result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/MarketCheckResult' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        },
+      },
+    },
+    '/api/market/feed': {
+      get: {
+        tags: ['market-integrity'],
+        summary: 'Aggregated market integrity feed (paid)',
+        description: 'NOTE per BACKLOG: this endpoint is currently in BOTH X402_PRICES and X402_FREE_PATHS in moltguard middleware; live behaviour is free. Pricing-config will be consolidated at P2-followup. Spec reflects intent (paid \$0.10).',
+        operationId: 'getMarketFeed',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        responses: {
+          '200': { description: 'Market feed', content: { 'application/json': { schema: { '$ref': '#/components/schemas/MarketFeedResult' } } } },
+        },
+      },
+    },
+    '/api/market/sample': {
+      get: {
+        tags: ['market-integrity'],
+        summary: 'Sample market integrity response (mock, no auth)',
+        operationId: 'getMarketSample',
+        responses: {
+          '200': { description: 'Sample', content: { 'application/json': { schema: { '$ref': '#/components/schemas/MarketSample' } } } },
+        },
+      },
+    },
+    '/events/feed': {
+      get: {
+        tags: ['market-integrity'],
+        summary: 'Polymarket events feed (free — anomaly + multi_outcome scanner output)',
+        description: 'Refreshed every 6h by cron (30 */6 * * *) from ~/moltstack/agents/moltguard.py scanner. Returns last_scan, anomaly_count, multi_outcome_count, and events array.',
+        operationId: 'getEventsFeed',
+        responses: {
+          '200': { description: 'Events feed', content: { 'application/json': { schema: { '$ref': '#/components/schemas/EventsFeedResult' } } } },
+          '404': { description: 'Scan has not run yet', content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } } },
         },
       },
     },
