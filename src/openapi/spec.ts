@@ -152,11 +152,268 @@ export const spec: OpenAPIV3_1.Document = {
         },
         required: ['verified'],
       },
+      ScoreBreakdown: {
+        type: 'object',
+        description: 'Component breakdown of AgentScore. Sum of components clamped to [0,100].',
+        properties: {
+          walletAge: { type: 'integer' },
+          txCount: { type: 'integer' },
+          counterparties: { type: 'integer' },
+          usdcBalance: { type: 'integer' },
+          erc8004Registration: { type: 'integer' },
+          erc8004Reputation: { type: 'integer' },
+          sybilPenalty: { type: 'integer', description: 'Negative — penalty for sybil-cluster membership' },
+          credentialBonus: { type: 'integer', description: 'Positive — bonus for held VCs' },
+        },
+      },
+      ScoreMeta: {
+        type: 'object',
+        properties: {
+          service: { type: 'string', enum: ['moltguard'] },
+          version: { type: 'string' },
+          chain: { type: 'string', example: 'base-<block-number>' },
+          dataSource: { type: 'string', example: 'blockscout+rpc+moltrust' },
+          timestamp: { type: 'string', format: 'date-time' },
+          pricingTier: { type: 'string', enum: ['paid', 'free-limited', 'sample'] },
+          note: { type: 'string' },
+        },
+      },
+      AgentScoreSample: {
+        type: 'object',
+        description: 'Mock response for /api/agent/sample. Fixed wallet 0x000...000.',
+        properties: {
+          wallet: { type: 'string', example: '0x0000000000000000000000000000000000000000' },
+          score: { type: 'integer', minimum: 0, maximum: 100 },
+          breakdown: { $ref: '#/components/schemas/ScoreBreakdown' },
+          _meta: { $ref: '#/components/schemas/ScoreMeta' },
+        },
+        required: ['wallet', 'score', 'breakdown', '_meta'],
+      },
+      AgentScoreFree: {
+        type: 'object',
+        description: 'Free-tier response — wallet + score only, no breakdown. Rate-limited 1/10min.',
+        properties: {
+          wallet: { type: 'string' },
+          score: { type: 'integer', minimum: 0, maximum: 100 },
+          _meta: { $ref: '#/components/schemas/ScoreMeta' },
+        },
+        required: ['wallet', 'score', '_meta'],
+      },
+      AgentScoreFull: {
+        type: 'object',
+        description: 'Paid full-score response — includes breakdown.',
+        properties: {
+          wallet: { type: 'string' },
+          score: { type: 'integer', minimum: 0, maximum: 100 },
+          breakdown: { $ref: '#/components/schemas/ScoreBreakdown' },
+          _meta: { $ref: '#/components/schemas/ScoreMeta' },
+        },
+        required: ['wallet', 'score', 'breakdown', '_meta'],
+      },
+      WalletData: {
+        type: 'object',
+        properties: {
+          balance: { type: 'string', description: 'ETH balance, decimal string' },
+          txCount: { type: 'integer' },
+          uniqueCounterparties: { type: 'integer' },
+          ageSeconds: { type: 'integer' },
+          firstTxTimestamp: { type: 'integer', description: 'Unix epoch seconds' },
+          recentTxCount30d: { type: 'integer' },
+          fundingSource: { type: ['string', 'null'] },
+          fundingAmountEth: { type: ['string', 'null'] },
+          latestBlock: { type: 'integer' },
+        },
+      },
+      ERC8004Data: {
+        type: 'object',
+        properties: {
+          registered: { type: 'boolean' },
+          agentId: { type: 'string' },
+          tokenURI: { type: ['string', 'null'] },
+          reputationScore: { type: ['number', 'null'] },
+          available: { type: 'boolean' },
+        },
+      },
+      MolTrustProfile: {
+        type: ['object', 'null'],
+        properties: {
+          did: { type: 'string' },
+          displayName: { type: 'string' },
+          verified: { type: 'boolean' },
+          reputationScore: { type: 'number' },
+          totalRatings: { type: 'integer' },
+          hasCredentials: { type: 'boolean' },
+        },
+      },
+      AgentDetail: {
+        type: 'object',
+        description: 'Paid full-detail response — score + breakdown + on-chain data + ERC-8004 + MolTrust profile.',
+        properties: {
+          wallet: { type: 'string' },
+          score: { type: 'integer', minimum: 0, maximum: 100 },
+          breakdown: { $ref: '#/components/schemas/ScoreBreakdown' },
+          _meta: { $ref: '#/components/schemas/ScoreMeta' },
+          walletData: { $ref: '#/components/schemas/WalletData' },
+          usdcBalance: { type: 'string' },
+          erc8004: { $ref: '#/components/schemas/ERC8004Data' },
+          moltrust: { $ref: '#/components/schemas/MolTrustProfile' },
+        },
+      },
+      InvalidAddressError: {
+        type: 'object',
+        properties: {
+          error: { type: 'string', enum: ['invalid_address'] },
+          message: { type: 'string' },
+        },
+        required: ['error', 'message'],
+      },
+      PaymentRequired: {
+        type: 'object',
+        description: 'x402 v2 challenge body. Returned with HTTP 402 when X-PAYMENT header is missing or invalid.',
+        properties: {
+          x402: {
+            type: 'object',
+            properties: {
+              version: { type: 'integer', example: 2 },
+              accepts: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    scheme: { type: 'string', example: 'exact' },
+                    network: { type: 'string', example: 'base' },
+                    maxAmountRequired: {
+                      type: 'object',
+                      properties: {
+                        asset: { type: 'string', example: 'USDC' },
+                        amount: { type: 'string', description: 'USDC base units (6 decimals)' },
+                      },
+                    },
+                    payTo: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      RateLimitError: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', example: 'Free tier: max 1 request(s) per 10 minutes. Use x402 paid endpoints for unlimited access.' },
+        },
+      },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
   security: [],
   paths: {
+    '/api/agent/detail/{address}': {
+      get: {
+        tags: ['agent-scoring'],
+        summary: 'Detailed wallet risk profile (paid)',
+        description:
+          'Full agent score + breakdown + on-chain wallet data + ERC-8004 registration status + ' +
+          'MolTrust profile (if registered). Combines outputs of calculateAgentScore + getWalletData ' +
+          '+ getUsdcBalance + getERC8004Data + resolveByAgentId.',
+        operationId: 'getAgentDetailPaid',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': {
+          amount: '0.05', currency: 'USDC', chain: 'eip155:8453',
+        } } as any),
+        parameters: [
+          { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' }, description: 'EVM 0x address' },
+        ],
+        responses: {
+          '200': {
+            description: 'Detailed wallet risk profile',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/AgentDetail' } } },
+          },
+          '400': {
+            description: 'Invalid 0x address',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/InvalidAddressError' } } },
+          },
+          '402': {
+            description: 'x402 payment required',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/PaymentRequired' } } },
+          },
+        },
+      },
+    },
+    '/api/agent/sample': {
+      get: {
+        tags: ['agent-scoring'],
+        summary: 'Sample agent score response (mock data, no auth)',
+        description:
+          'Returns a fixed mock AgentScore for wallet 0x000...000. Useful for client integration testing ' +
+          'without hitting paid /api/agent/score. No rate limit.',
+        operationId: 'getAgentSample',
+        responses: {
+          '200': {
+            description: 'Mock sample',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/AgentScoreSample' } } },
+          },
+        },
+      },
+    },
+    '/api/agent/score/{address}': {
+      get: {
+        tags: ['agent-scoring'],
+        summary: 'Wallet risk score with breakdown (paid)',
+        description:
+          'Computes agent score for the given address using calculateAgentScore. Returns wallet, score (0-100), ' +
+          'and component breakdown. For full on-chain + ERC-8004 + MolTrust integration use /api/agent/detail/{address}.',
+        operationId: 'getAgentScorePaid',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': {
+          amount: '0.05', currency: 'USDC', chain: 'eip155:8453',
+        } } as any),
+        parameters: [
+          { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' }, description: 'EVM 0x address' },
+        ],
+        responses: {
+          '200': {
+            description: 'Score with breakdown',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/AgentScoreFull' } } },
+          },
+          '400': {
+            description: 'Invalid 0x address',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/InvalidAddressError' } } },
+          },
+          '402': {
+            description: 'x402 payment required',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/PaymentRequired' } } },
+          },
+        },
+      },
+    },
+    '/api/agent/score-free/{address}': {
+      get: {
+        tags: ['agent-scoring'],
+        summary: 'Wallet risk score (free, rate-limited 1/10min)',
+        description:
+          'Free-tier wallet score — wallet + score, no breakdown. Rate-limited to 1 request per 10 minutes per IP. ' +
+          'For unlimited access + breakdown use paid /api/agent/score/{address}.',
+        operationId: 'getAgentScoreFree',
+        parameters: [
+          { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' }, description: 'EVM 0x address' },
+        ],
+        responses: {
+          '200': {
+            description: 'Score (no breakdown)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/AgentScoreFree' } } },
+          },
+          '400': {
+            description: 'Invalid 0x address',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/InvalidAddressError' } } },
+          },
+          '429': {
+            description: 'Rate limit exceeded',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/RateLimitError' } } },
+          },
+        },
+      },
+    },
     '/health': {
       get: {
         tags: ['transparency'],
