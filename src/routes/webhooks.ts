@@ -40,8 +40,8 @@ app.post('/api/webhooks/aeoess', async (c) => {
       // Bridge lookup: agent_id → did:moltrust:
       const bridgeResult = await client.query(
         `SELECT moltrust_did FROM did_bridges
-         WHERE wallet_address LIKE $1 AND chain = 'aeoess'`,
-        [`%${agent_id}%`]
+         WHERE wallet_address = $1 AND chain = 'aeoess'`,
+        [agent_id]
       );
 
       if (bridgeResult.rows.length > 0) {
@@ -83,8 +83,8 @@ app.post('/api/webhooks/aeoess', async (c) => {
       // Find the bridged DID
       const bridgeResult = await client.query(
         `SELECT moltrust_did FROM did_bridges
-         WHERE wallet_address LIKE $1 AND chain = 'aeoess'`,
-        [`%${agent_id}%`]
+         WHERE wallet_address = $1 AND chain = 'aeoess'`,
+        [agent_id]
       );
 
       if (bridgeResult.rows.length > 0) {
@@ -131,7 +131,7 @@ app.post('/api/webhooks/aeoess', async (c) => {
     return c.json({ received: true, event, agent_id });
   } catch (e: any) {
     console.error('[aeoess] Webhook error:', e.message);
-    return c.json({ error: e.message }, 500);
+    return c.json({ error: 'Webhook processing failed' }, 500);
   } finally {
     client.release();
   }
