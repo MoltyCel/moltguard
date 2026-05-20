@@ -23,8 +23,9 @@ function checkRateLimit(ip: string): boolean {
 
 // POST /hackathon/register — get a 72h API key
 app.post('/hackathon/register', async (c) => {
-  const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-    || c.req.header('x-real-ip') || 'unknown';
+  const ip = c.req.header('x-real-ip')
+    || c.req.header('x-forwarded-for')?.split(',').pop()?.trim()
+    || 'unknown';
 
   if (!checkRateLimit(ip)) {
     return c.json({ error: 'Rate limited — max 3 keys per hour per IP.' }, 429);
