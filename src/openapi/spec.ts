@@ -536,6 +536,16 @@ export const spec: OpenAPIV3_1.Document = {
         properties: { allowed: { type: 'boolean' }, riskScore: { type: 'integer' }, reasons: { type: 'array', items: { type: 'string' } } } },
       ActionStats: { type: 'object', additionalProperties: true, properties: { totalChecks: { type: 'integer' }, allowed: { type: 'integer' }, denied: { type: 'integer' } } },
       ActionEvents: { type: 'array', items: { type: 'object', additionalProperties: true, properties: { eventId: { type: 'string' }, did: { type: 'string' }, action: { type: 'string' }, timestamp: { type: 'string', format: 'date-time' } } } },
+      WalletAttestResult: { type: 'object', additionalProperties: true,
+        properties: { ok: { type: 'boolean' }, did: { type: 'string' }, address: { type: 'string' }, signature: { type: 'string' } } },
+      HackathonRegisterResult: { type: 'object', additionalProperties: true,
+        properties: { apiKey: { type: 'string', description: 'Hackathon-tier API key (bypasses x402)' }, expiresAt: { type: 'string', format: 'date-time' } } },
+      HackathonStats: { type: 'object', additionalProperties: true,
+        properties: { totalParticipants: { type: 'integer' }, activeKeys: { type: 'integer' } } },
+      VCChallenge: { type: 'object', additionalProperties: true,
+        properties: { challenge: { type: 'string' }, nonce: { type: 'string' }, expiresAt: { type: 'string', format: 'date-time' } } },
+      VCBindingResult: { type: 'object', additionalProperties: true, properties: { verified: { type: 'boolean' } } },
+      VCKeyRegisterResult: { type: 'object', additionalProperties: true, properties: { ok: { type: 'boolean' }, did: { type: 'string' } } },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -1203,6 +1213,44 @@ export const spec: OpenAPIV3_1.Document = {
     '/vc/aae/info': {
       get: { tags: ['aae-evaluation'], summary: 'AAE-evaluation service info', operationId: 'getAAEInfo',
         responses: { '200': { description: 'Info', content: { 'application/json': { schema: { '$ref': '#/components/schemas/AAEInfo' } } } } } },
+    },
+    '/api/wallet/attest': {
+      post: { tags: ['attestation-and-hackathon'], summary: 'Issue a wallet-attestation (DID binding)', operationId: 'attestWallet',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Attestation', content: { 'application/json': { schema: { '$ref': '#/components/schemas/WalletAttestResult' } } } } } },
+    },
+    '/api/wallet/attest/{did}': {
+      get: { tags: ['attestation-and-hackathon'], summary: 'Look up wallet attestation by DID', operationId: 'getWalletAttestation',
+        parameters: [{ name: 'did', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Attestation', content: { 'application/json': { schema: { '$ref': '#/components/schemas/WalletAttestResult' } } } } } },
+    },
+    '/hackathon/register': {
+      post: { tags: ['attestation-and-hackathon'], summary: 'Register for hackathon (issues API key bypassing x402)',
+        description: 'IP-rate-limited. Returns a time-limited hackathon API key.',
+        operationId: 'registerHackathon',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: {
+          '200': { description: 'Registered', content: { 'application/json': { schema: { '$ref': '#/components/schemas/HackathonRegisterResult' } } } },
+          '429': { description: 'IP rate limit exceeded', content: { 'application/json': { schema: { '$ref': '#/components/schemas/RateLimitError' } } } },
+        } },
+    },
+    '/hackathon/stats': {
+      get: { tags: ['attestation-and-hackathon'], summary: 'Hackathon participation stats', operationId: 'getHackathonStats',
+        responses: { '200': { description: 'Stats', content: { 'application/json': { schema: { '$ref': '#/components/schemas/HackathonStats' } } } } } },
+    },
+    '/vc/challenge': {
+      get: { tags: ['attestation-and-hackathon'], summary: 'Issue a challenge nonce for VC-holder binding', operationId: 'getVCChallenge',
+        responses: { '200': { description: 'Challenge', content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCChallenge' } } } } } },
+    },
+    '/vc/register-key': {
+      post: { tags: ['attestation-and-hackathon'], summary: 'Register a holder public key against a DID', operationId: 'registerVCKey',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Registered', content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCKeyRegisterResult' } } } } } },
+    },
+    '/vc/verify-binding': {
+      post: { tags: ['attestation-and-hackathon'], summary: 'Verify a holder signed the challenge nonce', operationId: 'verifyVCBinding',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Binding result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCBindingResult' } } } } } },
     },
   },
   tags: [
