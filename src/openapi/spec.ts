@@ -508,6 +508,10 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'Issued BuyerAgentCredential (W3C VC).',
         additionalProperties: true,
       },
+      TravelReceipt: { type: 'object', additionalProperties: true, properties: { receiptId: { type: 'string' } } },
+      TravelTrip: { type: 'object', additionalProperties: true, properties: { tripId: { type: 'string' } } },
+      TravelVerifyResult: { type: 'object', additionalProperties: true, properties: { verified: { type: 'boolean' } } },
+      TravelAgentCredential: { type: 'object', additionalProperties: true, description: 'Issued TravelAgentCredential (W3C VC).' },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -1004,6 +1008,40 @@ export const spec: OpenAPIV3_1.Document = {
         requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCIssueRequestBase' } } } },
         responses: {
           '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/BuyerAgentCredential' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        },
+      },
+    },
+    '/travel/info': {
+      get: { tags: ['travel-vc'], summary: 'MT Travel service info', operationId: 'getTravelInfo',
+        responses: { '200': { description: 'Info', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } } },
+    },
+    '/travel/receipt/{id}': {
+      get: { tags: ['travel-vc'], summary: 'Get an issued TravelAgentCredential receipt by id', operationId: 'getTravelReceipt',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Receipt', content: { 'application/json': { schema: { '$ref': '#/components/schemas/TravelReceipt' } } } } } },
+    },
+    '/travel/schema': {
+      get: { tags: ['travel-vc'], summary: 'TravelAgentCredential schema document', operationId: 'getTravelSchema',
+        responses: { '200': { description: 'Schema', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } } },
+    },
+    '/travel/trip/{tripId}': {
+      get: { tags: ['travel-vc'], summary: 'Get trip-detail snapshot by tripId', operationId: 'getTravelTrip',
+        parameters: [{ name: 'tripId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Trip', content: { 'application/json': { schema: { '$ref': '#/components/schemas/TravelTrip' } } } } } },
+    },
+    '/travel/verify': {
+      post: { tags: ['travel-vc'], summary: 'Verify a TravelAgentCredential (delegation chain, free)', operationId: 'verifyTravel',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Verify result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/TravelVerifyResult' } } } } } },
+    },
+    '/vc/travel-agent/issue': {
+      post: { tags: ['travel-vc'], summary: 'Issue a TravelAgentCredential (paid)', operationId: 'issueTravelAgentVC',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '5.00', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCIssueRequestBase' } } } },
+        responses: {
+          '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/TravelAgentCredential' } } } },
           '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
         },
       },
