@@ -102,4 +102,39 @@ app.get('/api/flags/:flagId', async (c) => {
   }
 });
 
+// POST /api/flags/record — Herald writes FlagRecord after anomaly tweet
+app.post('/api/flags/record', async (c) => {
+  const body = await c.req.json();
+  const { market_id, market_question, anomaly_type, anomaly_score,
+          price_at_flag, volume_24h_usd, signals, created_tweet_id, polymarket_slug } = body;
+
+  if (!market_id || !anomaly_score) {
+    return c.json({ error: 'market_id and anomaly_score required' }, 400);
+  }
+
+  const client = await pool.connect();
+  try {
+    const flag_id = 'flag_' + Date.now() + '_' + String(market_id).slice(0, 20);
+    const atype = anomaly_type || 'volume_spike';
+    await client.query(`
+      INSERT INTO flag_records
+        (flag_id, created_at, market_id, market_question, anomaly_type,
+         anomaly_score, price_at_flag, volume_24h_usd, signals,
+         created_tweet_id, polymarket_slug, status)
+      VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
+      ON CONFLICT (flag_id) DO NOTHING
+    `, [flag_id, market_id, market_question || null,
+        atype, anomaly_score,
+        price_at_flag || null, volume_24h_usd || null,
+        JSON.stringify(signals || {}),
+        created_tweet_id || null, polymarket_slug || null]);
+
+    return c.json({ success: true, flag_id });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  } finally {
+    client.release();
+  }
+});
+
 export default app;
