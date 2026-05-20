@@ -24,6 +24,24 @@ function defaultSpendLimit(score: number): number {
   return 0;
 }
 
+// TV-002: Restricted scope patterns — always denied regardless of trust score or AAE
+const RESTRICTED_SCOPE_PATTERNS = [
+  'admin:*',
+  'admin:',
+  'system:*',
+  'system:',
+  'root:',
+];
+
+function isScopeRestricted(scope: string): boolean {
+  return RESTRICTED_SCOPE_PATTERNS.some(
+    (pattern) => scope === pattern || scope.startsWith(pattern)
+  );
+}
+
+// TV-004: Temporal staleness threshold (365 days in ms)
+const TEMPORAL_STALENESS_MS = 365 * 24 * 60 * 60 * 1000;
+
 async function resolveDid(did: string): Promise<string> {
   // If already moltrust DID, return as-is
   if (did.startsWith('did:moltrust:')) return did;
@@ -127,7 +145,13 @@ app.post('/governance/validate-capabilities', async (c) => {
     return c.json({ error: 'agent_did required' }, 400);
   }
 
-  const capabilities = requested_capabilities || [];
+  // Normalize input: accept both `requested_capabilities` (array of {scope}) and `scope` (flat string array)
+  let capabilities: any[] = requested_capabilities || [];
+  if (capabilities.length === 0 && Array.isArray(body.scope)) {
+    capabilities = body.scope.map((s: string) => ({ scope: s }));
+  }
+
+  const requestedAmount: number | undefined = body.max_amount_usd;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 3600 * 1000);
 
@@ -143,20 +167,92 @@ app.post('/governance/validate-capabilities', async (c) => {
   // 4. Fetch AAE if present
   const aae = await fetchAAE(resolvedDid);
 
-  // 5. Evaluate capabilities
-  const { scope: permittedScopes, decision } = evaluateCapabilities(capabilities, aae, score);
+  // 5. TV-002: Check for restricted scope patterns — deny immediately if any present
+  const requestedScopes = capabilities.map((cap: any) => cap.scope || '');
+  const restrictedScopes = requestedScopes.filter(isScopeRestricted);
+  if (restrictedScopes.length > 0) {
+    const attestation = {
+      signal_type: 'governance_attestation',
+      iss: 'api.moltrust.ch',
+      sub: agent_did,
+      resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
+      decision: 'deny',
+      denial_reason: `Restricted scope(s) requested: ${restrictedScopes.join(', ')}`,
+      active_constraints: {
+        scope: [],
+        spend_limit: 0,
+        validity_window: {
+          not_before: now.toISOString(),
+          not_after: expiresAt.toISOString(),
+        },
+        trust_floor: 40,
+        passport_grade: passportGrade,
+      },
+      trust_score: score,
+      delegation_chain_hash: context?.delegation_chain_hash || null,
+      evaluation_timestamp: now.toISOString(),
+      expires_at: expiresAt.toISOString(),
+    };
+    const jws = await createJWS(attestation);
+    return c.json({ ...attestation, jws });
+  }
 
-  // 6. Determine spend limit
+  // 6. TV-004: Temporal evaluation — deny if evaluation_timestamp is stale
+  if (context?.evaluation_timestamp) {
+    const evalTime = new Date(context.evaluation_timestamp);
+    if (!isNaN(evalTime.getTime())) {
+      const ageMs = now.getTime() - evalTime.getTime();
+      if (ageMs > TEMPORAL_STALENESS_MS) {
+        const attestation = {
+          signal_type: 'governance_attestation',
+          iss: 'api.moltrust.ch',
+          sub: agent_did,
+          resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
+          decision: 'deny',
+          denial_reason: `Evaluation timestamp ${context.evaluation_timestamp} is more than 365 days in the past`,
+          active_constraints: {
+            scope: [],
+            spend_limit: 0,
+            validity_window: {
+              not_before: now.toISOString(),
+              not_after: expiresAt.toISOString(),
+            },
+            trust_floor: 40,
+            passport_grade: passportGrade,
+          },
+          trust_score: score,
+          delegation_chain_hash: context?.delegation_chain_hash || null,
+          evaluation_timestamp: context.evaluation_timestamp,
+          expires_at: expiresAt.toISOString(),
+        };
+        const jws = await createJWS(attestation);
+        return c.json({ ...attestation, jws });
+      }
+    }
+  }
+
+  // 7. Evaluate capabilities (existing AAE / trust-based logic)
+  const { scope: permittedScopes, decision: baseDecision } = evaluateCapabilities(capabilities, aae, score);
+
+  // 8. Determine spend limit
   const aaeThreshold = aae?.constraints?.autonomousThreshold;
   const spendLimit = aaeThreshold ? parseFloat(aaeThreshold) : defaultSpendLimit(score);
 
-  // 7. Build attestation payload
-  const attestation = {
+  // 9. TV-003: Budget ceiling enforcement — if requested amount exceeds spend limit, downgrade to conditional
+  let finalDecision = baseDecision;
+  let spendLimitCapped = false;
+  if (requestedAmount !== undefined && requestedAmount > spendLimit && baseDecision !== 'deny') {
+    finalDecision = 'conditional';
+    spendLimitCapped = true;
+  }
+
+  // 10. Build attestation payload
+  const attestation: Record<string, any> = {
     signal_type: 'governance_attestation',
     iss: 'api.moltrust.ch',
     sub: agent_did,
     resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
-    decision,
+    decision: finalDecision,
     active_constraints: {
       scope: permittedScopes,
       spend_limit: spendLimit,
@@ -173,7 +269,11 @@ app.post('/governance/validate-capabilities', async (c) => {
     expires_at: expiresAt.toISOString(),
   };
 
-  // 8. Sign with Ed25519
+  if (spendLimitCapped) {
+    attestation.spend_limit_capped = true;
+  }
+
+  // 11. Sign with Ed25519
   const jws = await createJWS(attestation);
 
   return c.json({
