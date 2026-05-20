@@ -12,7 +12,7 @@ setInterval(() => {
 }, 300_000);
 
 export const rateLimit: MiddlewareHandler = async (c, next) => {
-  const ip = c.req.header('x-forwarded-for') || c.req.header('cf-connecting-ip') || 'unknown';
+  const ip = c.req.header('x-real-ip') || c.req.header('x-forwarded-for')?.split(',').pop()?.trim() || c.req.header('cf-connecting-ip') || 'unknown';
   const now = Date.now();
   const entry = hits.get(ip);
 
