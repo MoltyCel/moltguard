@@ -25,6 +25,7 @@ import graphRoutes from './routes/graph.js';
 import governanceRoutes from './routes/governance.js';
 import hackathonRoutes from './routes/hackathon.js';
 import walletRoutes from './routes/wallet.js';
+import eventsRoutes from './routes/events.js';
 import { authMiddleware } from './middleware/auth.js';
 import { requestLogger } from './middleware/requestLogger.js';
 
@@ -56,6 +57,9 @@ app.route('/', walletRoutes);
 
 // Public transparency routes (no auth)
 app.route('/', transparencyRoutes);
+
+// Public events feed — Polymarket anomaly + multi_outcome events
+app.route('/', eventsRoutes);
 
 // Auth middleware for internal routes
 app.use('/internal/*', authMiddleware);
