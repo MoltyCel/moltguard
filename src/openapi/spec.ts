@@ -303,6 +303,27 @@ export const spec: OpenAPIV3_1.Document = {
           message: { type: 'string', example: 'Free tier: max 1 request(s) per 10 minutes. Use x402 paid endpoints for unlimited access.' },
         },
       },
+      SybilScanResponse: {
+        type: 'object',
+        description: 'On-chain sybil-cluster detection result.',
+        properties: {
+          wallet: { type: 'string' },
+          sybilCluster: {
+            type: 'object',
+            properties: {
+              detected: { type: 'boolean' },
+              clusterId: { type: ['string', 'null'] },
+              clusterSize: { type: 'integer' },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+              evidence: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          walletAge: { type: 'integer', description: 'Seconds since first tx' },
+          counterparties: { type: 'integer' },
+          fundingSource: { type: ['string', 'null'] },
+          _meta: { '$ref': '#/components/schemas/ScoreMeta' },
+        },
+      },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -528,6 +549,24 @@ export const spec: OpenAPIV3_1.Document = {
               'application/json': { schema: { $ref: '#/components/schemas/VerifyHashResponseNotFound' } },
             },
           },
+        },
+      },
+    },
+    '/api/sybil/scan/{address}': {
+      get: {
+        tags: ['sybil-detection'],
+        summary: 'On-chain sybil-cluster detection (paid)',
+        description: 'Heuristic clustering: wallet age, counterparty graph, funding-source convergence. Returns cluster detection verdict + confidence + evidence.',
+        operationId: 'getSybilScan',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        parameters: [
+          { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' }, description: 'EVM 0x address' },
+        ],
+        responses: {
+          '200': { description: 'Sybil scan result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SybilScanResponse' } } } },
+          '400': { description: 'Invalid 0x address', content: { 'application/json': { schema: { '$ref': '#/components/schemas/InvalidAddressError' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
         },
       },
     },
