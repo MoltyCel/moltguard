@@ -522,6 +522,10 @@ export const spec: OpenAPIV3_1.Document = {
       GraphScoreEdge: { type: 'object', additionalProperties: true, properties: { fromDid: { type: 'string' }, toDid: { type: 'string' }, score: { type: 'number' }, edgeType: { type: 'string' } } },
       GraphNeighbours: { type: 'object', additionalProperties: true, properties: { did: { type: 'string' }, neighbours: { type: 'array', items: { type: 'object', additionalProperties: true } } } },
       GraphStats: { type: 'object', additionalProperties: true, properties: { totalNodes: { type: 'integer' }, totalEdges: { type: 'integer' }, avgDegree: { type: 'number' } } },
+      FlagSummary: { type: 'object', additionalProperties: true, properties: { flagId: { type: 'string' }, severity: { type: 'string' }, target: { type: 'string' }, createdAt: { type: 'string', format: 'date-time' } } },
+      FlagList: { type: 'array', items: { '$ref': '#/components/schemas/FlagSummary' } },
+      FlagTrackRecord: { type: 'object', additionalProperties: true, properties: { totalFlags: { type: 'integer' }, resolvedCount: { type: 'integer' }, openCount: { type: 'integer' } } },
+      FlagRecordResult: { type: 'object', additionalProperties: true, properties: { ok: { type: 'boolean' }, flagId: { type: 'string' } } },
     },
   },
   // Default: public/free; paid endpoints declare `security: [{ x402: [] }]` per-path.
@@ -1134,6 +1138,27 @@ export const spec: OpenAPIV3_1.Document = {
     '/api/graph/stats': {
       get: { tags: ['agent-graph'], summary: 'Aggregate endorsement-graph statistics', operationId: 'getGraphStats',
         responses: { '200': { description: 'Stats', content: { 'application/json': { schema: { '$ref': '#/components/schemas/GraphStats' } } } } } },
+    },
+    '/api/flags': {
+      get: { tags: ['agent-flags'], summary: 'List active anomaly flags', operationId: 'listFlags',
+        responses: { '200': { description: 'Flag list', content: { 'application/json': { schema: { '$ref': '#/components/schemas/FlagList' } } } } } },
+    },
+    '/api/flags/record': {
+      post: { tags: ['agent-flags'], summary: 'Record a new anomaly flag', operationId: 'recordFlag',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+        responses: { '200': { description: 'Recorded', content: { 'application/json': { schema: { '$ref': '#/components/schemas/FlagRecordResult' } } } } } },
+    },
+    '/api/flags/track-record': {
+      get: { tags: ['agent-flags'], summary: 'Aggregated flag track-record (open vs resolved)', operationId: 'getFlagTrackRecord',
+        responses: { '200': { description: 'Track record', content: { 'application/json': { schema: { '$ref': '#/components/schemas/FlagTrackRecord' } } } } } },
+    },
+    '/api/flags/{flagId}': {
+      get: { tags: ['agent-flags'], summary: 'Get a flag by id', operationId: 'getFlag',
+        parameters: [{ name: 'flagId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Flag detail', content: { 'application/json': { schema: { '$ref': '#/components/schemas/FlagSummary' } } } },
+          '404': { description: 'Not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } } },
+        } },
     },
   },
   tags: [
