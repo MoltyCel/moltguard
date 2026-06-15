@@ -39,6 +39,8 @@ export const X402_FREE_PATHS = [
   '/prediction/leaderboard',
   '/radar/clusters',
   '/radar/operators',
+  '/radar/embed.js',
+  '/radar/widget',
   '/skill/info',
   '/skill/schema',
   '/skill/audit',
