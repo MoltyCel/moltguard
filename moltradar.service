@@ -1,0 +1,17 @@
+# /etc/systemd/system/moltradar.service   (triggered by moltradar.timer)
+# enable:  systemctl enable --now moltradar.timer
+[Unit]
+Description=MoltRadar refresh (scan -> store -> atomic publish)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Server layout (verified via SSH): user moltstack, repo ~/moltguard, sidecars in scripts/.
+User=moltstack
+WorkingDirectory=/home/moltstack/moltguard/scripts
+ExecStart=/home/moltstack/moltguard/scripts/moltradar-cron.sh
+# MUST match the RADAR_STORE the Hono service reads, or Hono serves a stale store:
+Environment=RADAR_STORE=/home/moltstack/moltguard/data/radar_store.json
+# exit 3 = degraded run, kept last good store -> treat as success, not failure:
+SuccessExitStatus=3

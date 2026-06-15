@@ -27,6 +27,7 @@ import hackathonRoutes from './routes/hackathon.js';
 import walletRoutes from './routes/wallet.js';
 import eventsRoutes from './routes/events.js';
 import openapiRoutes from './routes/openapi.js';
+import radarRoutes from './routes/radar.js';
 import { authMiddleware } from './middleware/auth.js';
 import { requestLogger } from './middleware/requestLogger.js';
 
@@ -51,6 +52,7 @@ app.route('/', travelRoutes);
 app.route('/', skillRoutes);
 app.route('/prediction', predictionRoutes);
 app.route('/vc/prediction', vcPredictionRoute);
+app.route('/radar', radarRoutes);
 
 // Hackathon self-service keys
 app.route('/', hackathonRoutes);

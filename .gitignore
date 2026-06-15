@@ -11,3 +11,7 @@ dist/
 # Test outputs / caches
 coverage/
 .vitest-cache/
+
+# MoltRadar runtime artifacts (written by scripts/moltradar-cron.sh at runtime)
+scripts/active_wallets.json
+scripts/radar_store.json

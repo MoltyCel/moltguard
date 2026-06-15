@@ -1,0 +1,8 @@
+# /etc/systemd/system/moltradar.timer  (+ matching .service). enable: systemctl enable --now moltradar.timer
+[Unit]
+Description=MoltRadar 6h refresh
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:00:00
+Persistent=true
+[Install]
+WantedBy=timers.target

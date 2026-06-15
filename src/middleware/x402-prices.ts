@@ -17,6 +17,9 @@ export const X402_PRICES: Record<string, number> = {
   'GET /prediction/integrity':  0.10,  // prefix match for /prediction/integrity/:market_id
   'POST /vc/prediction/issue':  5.00,
 
+  // MoltRadar — operator clusters (clusters + operators are free, see X402_FREE_PATHS)
+  'GET /radar/market':          0.05,  // prefix match for /radar/market/:id
+
   // Shopping & Travel VC issuance
   'POST /vc/buyer-agent/issue': 5.00,
   'POST /vc/travel-agent/issue': 5.00,
@@ -34,6 +37,8 @@ export const X402_FREE_PATHS = [
   '/prediction/wallet-link',
   '/prediction/wallet',
   '/prediction/leaderboard',
+  '/radar/clusters',
+  '/radar/operators',
   '/skill/info',
   '/skill/schema',
   '/skill/audit',
