@@ -152,4 +152,102 @@ routes.get('/operators', async (c: Context) => {
   return c.json({ entries, total: entries.length, _meta: meta('free') })
 })
 
+// ── the drop-in widget (served as application/javascript) ──
+const EMBED_JS = String.raw`/*! MoltRadar embed widget — drop-in live operator-cluster signal.
+ *  Usage (one line, no container needed):
+ *    <script src="https://api.moltrust.ch/guard/radar/embed.js" data-limit="5"></script>
+ *  Options (data-* on the script tag):
+ *    data-limit  (default 5)      data-theme  light|dark (default light)
+ *    data-title  (default "MoltRadar — operator clusters")
+ *    data-base   (default https://api.moltrust.ch/guard)
+ *  Style-isolated via Shadow DOM. No dependencies. CORS is open on the endpoint.
+ */
+(function () {
+  var s = document.currentScript;
+  if (!s) return;
+  var limit = parseInt(s.getAttribute('data-limit') || '5', 10) || 5;
+  var theme = (s.getAttribute('data-theme') || 'light').toLowerCase();
+  var title = s.getAttribute('data-title') || 'MoltRadar — operator clusters';
+  var base  = s.getAttribute('data-base') || 'https://api.moltrust.ch/guard';
+
+  var host = document.createElement('div');
+  s.parentNode.insertBefore(host, s.nextSibling);
+  var root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : host;
+
+  var dark = theme === 'dark';
+  var C = dark
+    ? { bg:'#0f1117', card:'#161922', bd:'#262b36', tx:'#e6e9ef', mut:'#8b93a7', acc:'#e85d26',
+        yes:'#4ade80', no:'#fb923c', yb:'rgba(74,222,128,.12)', nb:'rgba(251,146,60,.12)' }
+    : { bg:'transparent', card:'#ffffff', bd:'#e2e8f0', tx:'#0f172a', mut:'#64748b', acc:'#e85d26',
+        yes:'#15803d', no:'#c2410c', yb:'rgba(34,197,94,.12)', nb:'rgba(232,93,38,.12)' };
+
+  root.innerHTML =
+    '<style>'
+    + ':host{all:initial}*{box-sizing:border-box;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}'
+    + '.w{background:'+C.bg+';color:'+C.tx+';max-width:760px}'
+    + '.h{display:flex;align-items:center;gap:.5rem;margin:0 0 .25rem;font-size:.78rem;font-weight:700;letter-spacing:.04em}'
+    + '.h .acc{color:'+C.acc+'}'
+    + '.dot{width:7px;height:7px;border-radius:50%;background:#22c55e;animation:p 2s infinite}'
+    + '@keyframes p{0%{box-shadow:0 0 0 0 rgba(34,197,94,.45)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}'
+    + '.live{display:inline-flex;align-items:center;gap:.35rem;font-size:.62rem;color:#22c55e;letter-spacing:.08em}'
+    + '.upd{margin-left:auto;font-size:.66rem;color:'+C.mut+';font-family:ui-monospace,monospace}'
+    + '.g{display:grid;grid-template-columns:1fr;gap:.5rem;margin:.6rem 0}'
+    + '.c{background:'+C.card+';border:1px solid '+C.bd+';border-left:3px solid '+C.acc+';border-radius:9px;padding:.7rem .85rem}'
+    + '.q{font-size:.85rem;font-weight:600;margin-bottom:.5rem;line-height:1.3}'
+    + '.r{display:flex;flex-wrap:wrap;gap:.4rem .8rem;align-items:center;font-size:.74rem;font-family:ui-monospace,monospace}'
+    + '.wl b{color:'+C.acc+'}'
+    + '.d{font-size:.66rem;font-weight:700;padding:1px 7px;border-radius:5px}'
+    + '.d.y{background:'+C.yb+';color:'+C.yes+'}.d.n{background:'+C.nb+';color:'+C.no+'}'
+    + '.cc{color:'+C.mut+'}.cc b{color:'+C.tx+'}'
+    + '.cl{margin-left:auto;font-size:.66rem;color:'+C.mut+'}'
+    + '.f{font-size:.66rem;color:'+C.mut+';line-height:1.5;margin-top:.4rem}'
+    + '.f a{color:'+C.acc+';text-decoration:none}'
+    + '.sk{color:'+C.mut+';font-size:.78rem;font-family:ui-monospace,monospace;padding:1.2rem 0}'
+    + '</style>'
+    + '<div class="w"><div class="h"><span class="acc">'+esc(title)+'</span>'
+    + '<span class="live"><span class="dot"></span>LIVE</span><span class="upd" id="u"></span></div>'
+    + '<div class="g" id="g"><div class="sk">Loading…</div></div>'
+    + '<div class="f">ERC-8004-identified wallets resolved to their operator · disclosed fleets, not manipulation detection · '
+    + '<a href="'+esc(base)+'/radar/clusters" target="_blank" rel="noopener">powered by MoltRadar →</a></div></div>';
+
+  var G = root.getElementById('g'), U = root.getElementById('u');
+  function esc(x){return String(x||'').replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function ago(iso){if(!iso)return'';var s=Math.max(0,(Date.now()-new Date(iso).getTime())/1e3);
+    return s<90?Math.round(s)+'s ago':s<5400?Math.round(s/60)+'m ago':Math.round(s/3600)+'h ago';}
+  function render(d){
+    if(!d.markets||!d.markets.length){G.innerHTML='<div class="sk">No single-operator clusters right now.</div>';return;}
+    G.innerHTML=d.markets.map(function(m){var y=m.netDirection==='YES';
+      return '<div class="c"><div class="q">'+esc(m.question)+'</div><div class="r">'
+        +'<span class="wl"><b>'+m.identifiedWallets+'</b> wallets &rarr; '+m.distinctOperators+' op</span>'
+        +'<span class="d '+(y?'y':'n')+'">'+m.netDirection+' '+Math.abs(m.netSize)+'</span>'
+        +'<span class="cc">conc <b>'+(m.concentration||0).toFixed(2)+'</b></span>'
+        +'<span class="cl">'+(m.endDate||'—')+'</span></div></div>';}).join('');
+    if(U)U.textContent='updated '+ago(d.generated);
+  }
+  function load(){fetch(base+'/radar/clusters?limit='+limit+'&sort=wallets')
+    .then(function(r){return r.json();}).then(render)
+    .catch(function(){G.innerHTML='<div class="sk">Feed unavailable.</div>';});}
+  load(); setInterval(load, 90000);
+})();
+`
+
+// GET /radar/embed.js  — one-line drop-in widget
+routes.get('/embed.js', (c) => {
+  c.header('Content-Type', 'application/javascript; charset=utf-8')
+  c.header('Cache-Control', 'public, max-age=3600')
+  c.header('Access-Control-Allow-Origin', '*')
+  return c.body(EMBED_JS)
+})
+
+// GET /radar/widget  — minimal iframe host page (zero-JS embed option)
+routes.get('/widget', (c) => {
+  c.header('Content-Type', 'text/html; charset=utf-8')
+  return c.body(
+    '<!doctype html><meta charset=utf-8>'
+    + '<meta name=viewport content="width=device-width,initial-scale=1">'
+    + '<body style="margin:0;padding:8px;font-family:sans-serif">'
+    + '<script src="/guard/radar/embed.js" data-limit="6"></scr' + 'ipt>'
+  )
+})
+
 export default routes
