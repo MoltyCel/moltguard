@@ -1131,6 +1131,36 @@ export const spec: OpenAPIV3_1.Document = {
         parameters: [{ name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' } }],
         responses: { '200': { description: 'Wallet info', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionWalletInfo' } } } } } },
     },
+    '/radar/clusters': {
+      get: { tags: ['prediction-markets'], summary: 'Single-operator prediction-market clusters (signed)',
+        description: 'MoltRadar: prediction markets where the ERC-8004-identified wallets (the identity-carrying subset, NOT total holders) resolve to a single on-chain operator. Fields: identifiedWallets, distinctOperators, netDirection/netSize, concentration. EdDSA-JWS signed — verify against did:web:moltrust.ch#moltguard-key-1 (JWKS at /.well-known/jwks.json). Free (in X402_FREE_PATHS).',
+        operationId: 'getRadarClusters',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, maximum: 100 } },
+          { name: 'min_wallets', in: 'query', schema: { type: 'integer', default: 5 } },
+          { name: 'sort', in: 'query', schema: { type: 'string', enum: ['wallets', 'net', 'value'], default: 'wallets' } },
+          { name: 'open_only', in: 'query', schema: { type: 'boolean', default: true } },
+        ],
+        responses: { '200': { description: 'Signed operator-cluster feed', content: { 'application/json': { schema: { type: 'object' } } } } } },
+    },
+    '/radar/operators': {
+      get: { tags: ['prediction-markets'], summary: 'Operator ranking (signed)',
+        description: 'MoltRadar: on-chain operators ranked by number of prediction markets and identified-wallet count. Same EdDSA-JWS signing as /radar/clusters (key did:web:moltrust.ch#moltguard-key-1). Free.',
+        operationId: 'getRadarOperators',
+        responses: { '200': { description: 'Operator ranking', content: { 'application/json': { schema: { type: 'object' } } } } } },
+    },
+    '/radar/market/{id}': {
+      get: { tags: ['prediction-markets'], summary: 'Full operator decomposition for one market (paid)',
+        description: 'MoltRadar: every ERC-8004-identified wallet on one market, its resolved on-chain operator, plus the dominant operator and its net side/size.',
+        operationId: 'getRadarMarketPaid',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '0.05', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Operator decomposition', content: { 'application/json': { schema: { type: 'object' } } } },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+        } },
+    },
     '/vc/prediction/issue': {
       post: { tags: ['prediction-markets'], summary: 'Issue a PredictionTrackCredential (paid)',
         operationId: 'issuePredictionVC',
