@@ -34,7 +34,10 @@ import { requestLogger } from './middleware/requestLogger.js';
 const app = new Hono();
 
 // Global middleware
-app.use('*', cors());
+app.use('*', cors({
+  origin: ['https://moltrust.ch', 'https://api.moltrust.ch'],
+  credentials: false,
+}));
 app.use('*', logger());
 app.use('*', requestLogger);
 
