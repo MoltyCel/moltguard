@@ -117,4 +117,4 @@ console.log(`
 ╚══════════════════════════════════════════════╝
 `);
 
-serve({ fetch: app.fetch, port: CONFIG.port });
+serve({ fetch: app.fetch, port: CONFIG.port, hostname: "127.0.0.1" });
