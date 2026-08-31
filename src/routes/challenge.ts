@@ -62,10 +62,15 @@ app.post('/verify-binding', async (c) => {
   }
 });
 
-// POST /vc/register-key — Register a public key for an agent DID
+// POST /vc/register-key — Replace the public key of an agent DID.
+//
+// Replacing requires proof of possession of the key currently on record:
+//   proof: { nonce, signatureB64url }
+// where nonce comes from GET /vc/challenge?did=<did> and the signature is made
+// with the CURRENT key. First-time registration is closed here (E1).
 app.post('/register-key', async (c) => {
   const body = await c.req.json().catch(() => ({} as any));
-  const { did, publicKeyHex } = body;
+  const { did, publicKeyHex, proof } = body;
 
   if (!did || typeof did !== 'string') {
     return c.json({ error: 'validation_error', message: 'did is required' }, 422);
@@ -74,16 +79,16 @@ app.post('/register-key', async (c) => {
     return c.json({ error: 'validation_error', message: 'publicKeyHex is required (64 hex chars, Ed25519)' }, 422);
   }
 
-  const success = await registerPublicKey(did, publicKeyHex);
-  if (!success) {
-    return c.json({ error: 'registration_failed', message: 'DID not found or invalid public key format (expected 64 hex chars)' }, 400);
+  const result = await registerPublicKey(did, publicKeyHex, proof ?? null);
+  if (!result.registered) {
+    return c.json({ error: result.error, message: result.detail }, result.status as any);
   }
 
   return c.json({
     registered: true,
     did,
     algorithm: 'Ed25519',
-    message: 'Public key registered. You can now use /vc/verify-binding to prove holder binding.',
+    message: 'Public key replaced. You can now use /vc/verify-binding to prove holder binding.',
   });
 });
 
