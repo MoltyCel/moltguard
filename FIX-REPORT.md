@@ -163,3 +163,44 @@ gesetzt (64 bzw. 60 Zeichen). Der Start bleibt unverändert.
   M9 Trusted-Proxy-CIDR in `rateLimit.ts`, M13 TS-KMS-Prod-Gate, R3-E Rate-Limit
   auf `/internal/auth/login`, R3-F `UNSIGNED_`-Fallback in `credential.ts`) —
   Phase 2 und 3.
+
+---
+
+# Abschluss — Stand 2026-08-31, alle Phasen gemergt und deployt
+
+| PR | Inhalt |
+|---|---|
+| #11 | Phase 1 — FIX 1 (K2), FIX 11 (H9), FIX 9 (H3), FIX 6 (H5) |
+| #12 | Phase 2 — FIX 5 (H4) |
+| #13 | Phase 3A — M4, M9, M13, R4-D |
+
+Endstand `main` = `87617f0`, gebaut (`npm run build`, `dist/` ist gitignored)
+und neu gestartet um 20:08 UTC.
+
+## Deploy-Verifikation gegen Produktion
+
+```
+/guard/health                                    200
+GET /guard/api/agent/score  ohne Zahlung         402  x402-v2-Payload
+GET /guard/api/agent/score  mit Feld-Receipt     402  paymentError: missing_tx_hash
+```
+
+Die zweite Zeile ist der Kern von FIX 9. Genau dieses Receipt —
+`{"network":8453,"recipient":"0x3802…","amount":50000,"token":"0x8335…"}`,
+base64-kodiert — hat vorher jeden bepreisten Endpoint geöffnet, beliebig oft.
+Es wird jetzt abgewiesen, weil kein Transaktions-Hash darin steht.
+
+Der Startup-Log zeigt `[x402] ENABLED (v2)`, und der Prozess ist hochgekommen —
+womit auch `assertAuthConfig()` aus FIX 5 durchgelaufen ist. Mit leerem
+`JWT_SECRET` wäre er es nicht.
+
+`x402_receipts` wird beim ersten Zahlungsversuch idempotent angelegt; bis
+dahin existiert die Tabelle nicht, was korrekt ist.
+
+## Offen
+
+Der `@x402/hono`-Umstieg steht im Backlog (`moltrust-api` `docs/BACKLOG.md`).
+Der E1-Eigentümer-Kanal ebenfalls — ohne ihn können die 96 von 98 Agents ohne
+hinterlegten Schlüssel kein Holder-Binding erreichen und damit keine VC
+beziehen. Das ist die praktische Folge von FIX 1 + FIX 11 und sollte vor der
+nächsten Kundenintegration geklärt sein.
