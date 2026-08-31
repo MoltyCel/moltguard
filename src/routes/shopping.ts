@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { requireHolderBinding } from '../services/challenge.js';
 import { BuyerAgentCredentialSchema } from '../schemas/BuyerAgentCredential.js';
 import {
   verifyShoppingTransaction,
@@ -80,6 +81,7 @@ app.post('/vc/buyer-agent/issue', async (c) => {
     maxTransactionsPerDay = 5,
     trustLevel = 'basic',
     authorizationEnvelope,
+    proof,
   } = body;
 
   if (!agentDID || typeof agentDID !== 'string') {
@@ -96,6 +98,15 @@ app.post('/vc/buyer-agent/issue', async (c) => {
   }
   if (!['basic', 'verified', 'premium'].includes(trustLevel)) {
     return c.json({ error: 'invalid_field', message: 'trustLevel must be basic, verified, or premium' }, 400);
+  }
+
+  // agentDID, humanDID and spendLimit come straight from the body, and the
+  // response is signed with MoltGuard's real key. Without proof that the caller
+  // holds the key registered for agentDID, anyone could have a credential minted
+  // for a foreign agent with arbitrary limits.
+  const pop = await requireHolderBinding(agentDID, proof);
+  if (!pop.ok) {
+    return c.json({ error: pop.error, message: pop.detail }, pop.status as any);
   }
 
   const credential = await issueBuyerAgentVC({

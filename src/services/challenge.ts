@@ -109,6 +109,51 @@ export async function verifyBinding(
   };
 }
 
+// ── Holder-Binding Gate (credential issuance) ──
+
+export type HolderProof = { nonce: string; signatureB64url: string };
+
+export type HolderGateResult =
+  | { ok: true }
+  | { ok: false; error: string; status: number; detail: string };
+
+/**
+ * Require the caller to prove it holds the key registered for `did` before a
+ * credential is signed for that subject.
+ *
+ * Issuance routes take the subject DID from the request body, so without this
+ * anyone can obtain a genuinely signed credential naming a foreign agent. The
+ * x402 price in front of those routes gates cost, not ownership.
+ */
+export async function requireHolderBinding(
+  did: string,
+  proof: unknown,
+): Promise<HolderGateResult> {
+  const p = proof as HolderProof | null | undefined;
+  if (!p || typeof p.nonce !== 'string' || typeof p.signatureB64url !== 'string') {
+    return {
+      ok: false,
+      error: 'proof_required',
+      status: 401,
+      detail:
+        'Issuance requires holder binding: GET /vc/challenge?did=<agentDID>, sign the ' +
+        'nonce with the key registered for that DID, and send proof: { nonce, signatureB64url }.',
+    };
+  }
+
+  const result = await verifyBinding(did, p.nonce, p.signatureB64url);
+  if (!result.verified) {
+    return {
+      ok: false,
+      error: result.error,
+      status: result.status,
+      detail: result.detail ?? 'Holder binding could not be verified.',
+    };
+  }
+
+  return { ok: true };
+}
+
 // ── Register Public Key ──
 
 export type RegisterKeyProof = { nonce: string; signatureB64url: string };
