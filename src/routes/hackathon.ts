@@ -1,10 +1,19 @@
 // Hackathon self-service API key system
 // 72h temporary keys that bypass x402 paywall
+import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import crypto from 'node:crypto';
 import { query } from '../services/db.js';
 
 const app = new Hono();
+
+/** Constant-time string comparison for admin credentials. */
+function secretsMatch(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf-8');
+  const right = Buffer.from(b, 'utf-8');
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
 
 // Rate limit: track IPs
 const ipLimits = new Map<string, { count: number; resetAt: number }>();
@@ -85,7 +94,7 @@ app.post('/hackathon/register', async (c) => {
 app.get('/hackathon/stats', async (c) => {
   const adminKey = c.req.header('x-admin-key');
   const expected = process.env.ADMIN_KEY || '';
-  if (!expected || adminKey !== expected) {
+  if (!expected || !adminKey || !secretsMatch(adminKey, expected)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
 

@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import { CONFIG } from '../config.js';
+import { getClientIp } from './clientIp.js';
 
 const hits = new Map<string, { count: number; resetAt: number }>();
 
@@ -12,7 +13,9 @@ setInterval(() => {
 }, 300_000);
 
 export const rateLimit: MiddlewareHandler = async (c, next) => {
-  const ip = c.req.header('x-real-ip') || c.req.header('x-forwarded-for')?.split(',').pop()?.trim() || c.req.header('cf-connecting-ip') || 'unknown';
+  // Proxy headers are only honoured when the peer is a trusted proxy —
+  // otherwise a caller could rotate them for a fresh bucket per request.
+  const ip = getClientIp(c);
   const now = Date.now();
   const entry = hits.get(ip);
 

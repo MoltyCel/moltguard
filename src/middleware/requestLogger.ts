@@ -3,6 +3,7 @@
  * Logs all requests to shared request_log table (PostgreSQL).
  */
 import type { Context, Next } from 'hono';
+import { getClientIp } from './clientIp.js';
 import pool from '../services/db.js';
 
 const SKIP_PATHS = new Set(['/health', '/favicon.ico']);
@@ -18,10 +19,9 @@ export async function requestLogger(c: Context, next: Next) {
 
   if (SKIP_PATHS.has(path)) return;
 
-  const rawIp =
-    c.req.header('x-real-ip') ??
-    c.req.header('x-forwarded-for')?.split(',').pop()?.trim() ??
-    'unknown';
+  // Same trust rule as the rate limiter: spoofable headers were being written
+  // into the shared request_log table as if they were the caller.
+  const rawIp = getClientIp(c);
 
   // DSGVO: anonymize last octet
   const ip = rawIp.includes('.')
