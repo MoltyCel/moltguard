@@ -2,8 +2,32 @@
 // HS256 signing via native Node crypto. Password verified via bcryptjs.
 
 import type { Context, MiddlewareHandler } from 'hono';
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import bcrypt from 'bcryptjs';
+
+/**
+ * Refuse to serve with an unusable auth configuration.
+ *
+ * An empty JWT_SECRET does not disable token checking — it makes every token
+ * forgeable, because signJWT/verifyJWT then HMAC with the empty string and the
+ * source is public. That is a complete bypass of the internal harness without
+ * ever needing the password. JWT_SECRET was also missing from .env.example, so
+ * an operator following the example started in exactly that state.
+ *
+ * Called from the entrypoint before any listener is bound.
+ */
+export function assertAuthConfig(): void {
+  const missing: string[] = [];
+  if (!process.env.JWT_SECRET) missing.push('JWT_SECRET');
+  if (!process.env.HARNESS_PASSWORD_HASH) missing.push('HARNESS_PASSWORD_HASH');
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required auth configuration: ${missing.join(', ')}. ` +
+        'An empty JWT_SECRET makes every internal token forgeable. ' +
+        'See .env.example.',
+    );
+  }
+}
 
 // Read env vars lazily to ensure dotenv has loaded
 function getJwtSecret(): string {
@@ -11,6 +35,16 @@ function getJwtSecret(): string {
 }
 function getPasswordHash(): string {
   return process.env.HARNESS_PASSWORD_HASH || '';
+}
+
+/** Constant-time comparison of two base64url signatures. */
+function signaturesMatch(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'base64url');
+  const right = Buffer.from(b, 'base64url');
+  // timingSafeEqual throws on a length mismatch; a differing length is already
+  // a mismatch, and the length of an HMAC-SHA256 digest is not a secret.
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
 }
 
 function base64url(input: string): string {
@@ -33,7 +67,7 @@ export function verifyJWT(token: string): Record<string, unknown> {
   const expected = createHmac('sha256', getJwtSecret())
     .update(`${header}.${body}`)
     .digest('base64url');
-  if (sig !== expected) throw new Error('Invalid signature');
+  if (!signaturesMatch(sig, expected)) throw new Error('Invalid signature');
   const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
   if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
     throw new Error('Expired');

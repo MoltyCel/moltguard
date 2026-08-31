@@ -119,6 +119,41 @@ Credential beziehen. Der Eigentümer-Kanal für Erst-Registrierungen ist damit
 Voraussetzung für die Nutzbarkeit der Issuance-Routen und sollte vor einem
 Deploy stehen.
 
+---
+
+# Phase 2 — Fail-Open-Startup-Guard
+
+Branch `security/hardening-2026-08-phase2`, ab `origin/main` = `388a28e`.
+
+| FIX | Fund | Commit |
+|---|---|---|
+| FIX 5 | 🟠 H4 — `JWT_SECRET` Fail-Open, `!==`-Signaturvergleich, Lücke in `.env.example` | `687e9e2` |
+
+```
+npx tsc --noEmit   → sauber
+npx vitest run     → 6 Dateien, 47 passed (11 neu)
+```
+
+## Drei Teile
+
+`getJwtSecret()` lieferte `''` bei ungesetztem `JWT_SECRET`, und `JWT_SECRET`
+fehlte in `.env.example`. Wer sich an die Beispieldatei hielt, fuhr einen
+Prozess, in dem `signJWT` und `verifyJWT` beide mit dem leeren String HMACen —
+der Code ist öffentlich, also konnte jeder einen Token bauen und ohne das
+Passwort in `/internal/*` spazieren. `HARNESS_PASSWORD_HASH` war auf dem
+Login-Pfad bereits fail-closed, der Token-Pfad nicht.
+
+`assertAuthConfig()` läuft jetzt im Einstiegspunkt vor `serve()` und bricht ab,
+wenn eine der beiden Variablen fehlt. Beide stehen in `.env.example`.
+
+Der Signaturvergleich geht von `sig !== expected` auf `timingSafeEqual` über
+den dekodierten Digests, mit vorgeschalteter Längenprüfung — `timingSafeEqual`
+wirft bei ungleicher Länge, und die Länge eines HMAC-SHA256-Digests ist kein
+Geheimnis.
+
+**Blast-Radius:** beide Variablen sind in `/home/moltstack/moltguard/.env`
+gesetzt (64 bzw. 60 Zeichen). Der Start bleibt unverändert.
+
 ## Offen (nicht in diesem Branch)
 
 - **Eigentümer-Kanal für Erst-Registrierung** — Folge aus E1, siehe oben.
