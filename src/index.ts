@@ -28,7 +28,7 @@ import walletRoutes from './routes/wallet.js';
 import eventsRoutes from './routes/events.js';
 import openapiRoutes from './routes/openapi.js';
 import radarRoutes from './routes/radar.js';
-import { authMiddleware } from './middleware/auth.js';
+import { authMiddleware, assertAuthConfig } from './middleware/auth.js';
 import { requestLogger } from './middleware/requestLogger.js';
 
 const app = new Hono();
@@ -116,5 +116,9 @@ console.log(`
 ║  Testnet:  ${String(CONFIG.isTestnet).padEnd(33)}║
 ╚══════════════════════════════════════════════╝
 `);
+
+// Fail-closed before anything is served: an empty JWT_SECRET would make every
+// internal token forgeable rather than rejected.
+assertAuthConfig();
 
 serve({ fetch: app.fetch, port: CONFIG.port, hostname: "127.0.0.1" });
