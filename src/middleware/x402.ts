@@ -1,6 +1,20 @@
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import { query } from '../services/db.js';
 import { X402_PRICES, X402_FREE_PATHS } from './x402-prices.js';
+import { verifyPayment } from '../services/x402-verify.js';
+
+/** Routes that mint a signed credential — never waived by a hackathon key. */
+const CREDENTIAL_ISSUANCE = [
+  '/vc/skill/issue',
+  '/vc/prediction/issue',
+  '/vc/buyer-agent/issue',
+  '/vc/travel-agent/issue',
+  '/api/credential/issue',
+];
+
+export function isCredentialIssuance(path: string): boolean {
+  return CREDENTIAL_ISSUANCE.some((p) => path === p || path.startsWith(p + '/'));
+}
 
 const MOLTRUST_WALLET = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4da1F1A045A271D5838F5';
 const BASE_CHAIN_ID = 8453;
@@ -27,24 +41,6 @@ function isFree(path: string): boolean {
   // Root path is always free
   if (path === '/' || path === '') return true;
   return false;
-}
-
-function verifyPaymentHeader(header: string, expectedPrice: number): boolean {
-  // x402 v2 Payment-Receipt Header validation
-  // Format: "x402 <base64-encoded-receipt>"
-  if (!header.startsWith('x402 ')) return false;
-  try {
-    const receipt = JSON.parse(Buffer.from(header.slice(5), 'base64').toString());
-    return (
-      receipt.network === BASE_CHAIN_ID &&
-      receipt.recipient?.toLowerCase() === MOLTRUST_WALLET.toLowerCase() &&
-      // v2: 'amount', v1 compat: 'maxAmountRequired'
-      (receipt.amount ?? receipt.maxAmountRequired) >= expectedPrice &&
-      receipt.token === USDC_CONTRACT
-    );
-  } catch {
-    return false;
-  }
 }
 
 async function isValidHackathonKey(key: string): Promise<boolean> {
@@ -90,15 +86,18 @@ export function createX402Middleware(): MiddlewareHandler {
     // Free endpoints: always pass through
     if (isFree(path)) return next();
 
-    // Hackathon keys bypass x402
-    const apiKey = c.req.header('X-API-Key') ?? c.req.header('x-api-key') ?? '';
-    if (apiKey && await isValidHackathonKey(apiKey)) {
-      return next();
-    }
-
     // Determine price for this endpoint
     const price = getPrice(method, path);
     if (price === null) return next(); // no price defined = free
+
+    // Hackathon keys waive the price on the read endpoints they were meant for.
+    // They never waive credential issuance: /hackathon/register hands a 72-hour
+    // key to any unverified e-mail address, so an issuance bypass here would be
+    // a self-service route to signed credentials.
+    const apiKey = c.req.header('X-API-Key') ?? c.req.header('x-api-key') ?? '';
+    if (apiKey && !isCredentialIssuance(path) && await isValidHackathonKey(apiKey)) {
+      return next();
+    }
 
     // Check payment header — v2 first, then v1 backward compat
     const v2Header = c.req.header('PAYMENT-SIGNATURE') ?? c.req.header('payment-signature') ?? '';
@@ -106,10 +105,15 @@ export function createX402Middleware(): MiddlewareHandler {
     const paymentHeader = v2Header || v1Header;
     const protocolVersion = v2Header ? 'v2' : v1Header ? 'v1' : null;
 
-    if (paymentHeader && verifyPaymentHeader(paymentHeader, price)) {
-      // Set protocol version for downstream logging
-      c.set('x402_protocol_version', protocolVersion);
-      return next();
+    let failure: { reason: string; detail: string } | null = null;
+    if (paymentHeader) {
+      const outcome = await verifyPayment(paymentHeader, price, path, MOLTRUST_WALLET);
+      if (outcome.ok) {
+        c.set('x402_protocol_version', protocolVersion);
+        c.set('x402_tx_hash', outcome.txHash);
+        return next();
+      }
+      failure = { reason: outcome.reason, detail: outcome.detail };
     }
 
     // Return 402 with x402 v2 payment details
@@ -117,6 +121,7 @@ export function createX402Middleware(): MiddlewareHandler {
     return c.json(
       {
         error: 'Payment Required',
+        ...(failure ? { paymentError: failure.reason, paymentErrorDetail: failure.detail } : {}),
         x402: {
           version: '2',
           accepts: [
