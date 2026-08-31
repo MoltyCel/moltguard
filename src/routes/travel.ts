@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { resolveAAE } from '../lib/aae.js';
 import { TravelAgentCredentialSchema } from '../schemas/TravelAgentCredential.js';
+import { requireHolderBinding } from '../services/challenge.js';
 import {
   verifyTravelTransaction,
   getBookingReceipt,
@@ -100,6 +101,7 @@ app.post('/vc/travel-agent/issue', async (c) => {
     maxTransactionsPerDay = 10,
     trustLevel = 'verified',
     authorizationEnvelope,
+    proof,
   } = body;
 
   if (!agentDID || typeof agentDID !== 'string') {
@@ -119,6 +121,16 @@ app.post('/vc/travel-agent/issue', async (c) => {
   }
   if (!['basic', 'verified', 'premium'].includes(trustLevel)) {
     return c.json({ error: 'invalid_field', message: 'trustLevel must be basic, verified, or premium' }, 400);
+  }
+
+  // agentDID, principalDID and spendLimit come straight from the body, and the
+  // response is signed with MoltGuard's real key. Without proof that the caller
+  // holds the key registered for agentDID, anyone could have a credential minted
+  // for a foreign agent with arbitrary limits. Payment is not identity: the x402
+  // price gates cost, not ownership.
+  const pop = await requireHolderBinding(agentDID, proof);
+  if (!pop.ok) {
+    return c.json({ error: pop.error, message: pop.detail }, pop.status as any);
   }
 
   const credential = await issueTravelAgentVC({

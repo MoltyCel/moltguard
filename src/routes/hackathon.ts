@@ -51,12 +51,18 @@ app.post('/hackathon/register', async (c) => {
     [email]
   );
 
+  // Never hand the key back out. The endpoint is unauthenticated and takes the
+  // address from the request body, so echoing an active key turns knowledge of
+  // a participant's e-mail address into possession of their key.
   if (existing.rows.length > 0) {
     return c.json({
-      api_key: existing.rows[0].api_key,
+      error: 'key_already_issued',
       expires_at: existing.rows[0].expires_at,
-      message: 'Your existing hackathon key is still valid.',
-    });
+      message:
+        'A hackathon key for this address is still valid. It was shown once at ' +
+        'registration and is not retrievable. Wait for it to expire, or contact ' +
+        'the organisers to have it revoked.',
+    }, 409);
   }
 
   // Generate new key
