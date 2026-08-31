@@ -9,11 +9,23 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * Decrypt the MoltGuard signing key using AWS KMS.
  * Key is cached in memory for 5 minutes to minimize KMS calls.
- * Falls back to plaintext env var if encrypted var is not set (migration period).
+ *
+ * A plaintext MOLTGUARD_SIGNING_KEY is accepted only outside production. The
+ * Python signer (moltrust-api app/crypto/kms_signer.py) already refuses its
+ * plaintext fallback when MOLTRUST_ENV=production; without the same gate here,
+ * setting one environment variable silently downgraded the TypeScript signer
+ * from KMS to a key sitting in the process environment.
  */
 export async function getDecryptedSigningKey(): Promise<string> {
-  // Fallback: if plaintext key is still set, use it (migration period)
+  const isProduction = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+
   if (process.env.MOLTGUARD_SIGNING_KEY && !process.env.MOLTGUARD_SIGNING_KEY_ENCRYPTED) {
+    if (isProduction) {
+      throw new Error(
+        'MOLTGUARD_SIGNING_KEY_ENCRYPTED is required in production ' +
+          '(NODE_ENV=production); the plaintext fallback is disabled.',
+      );
+    }
     return process.env.MOLTGUARD_SIGNING_KEY;
   }
 

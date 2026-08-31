@@ -54,7 +54,6 @@ export const X402_FREE_PATHS = [
   '/travel/receipt',
   '/travel/trip',
   '/travel/verify',
-  '/api/market/feed',
   '/transparency',
   '/internal',
   '/salesguard/verify',
