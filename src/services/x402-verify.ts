@@ -35,7 +35,7 @@ const ERC20_TRANSFER_ABI = [
 ] as const;
 
 export type VerifyOutcome =
-  | { ok: true; txHash: string; paid: bigint }
+  | { ok: true; txHash: string; paid: bigint; payer: string | null }
   | { ok: false; reason: string; detail: string };
 
 // Same construction as services/chain.ts.
@@ -99,11 +99,15 @@ function parseReceiptHeader(header: string): Record<string, unknown> | null {
  * Sum the USDC transferred to `recipient` by the given transaction.
  * Returns null when the transaction is missing, reverted, or on another chain.
  */
-async function usdcPaidTo(txHash: Hash, recipient: string): Promise<bigint | null> {
+async function usdcPaidTo(
+  txHash: Hash,
+  recipient: string,
+): Promise<{ total: bigint; payer: string | null } | null> {
   const receipt = await client.getTransactionReceipt({ hash: txHash });
   if (!receipt || receipt.status !== 'success') return null;
 
   let total = 0n;
+  let payer: string | null = null;
   for (const log of receipt.logs) {
     if (log.address.toLowerCase() !== USDC_CONTRACT.toLowerCase()) continue;
     try {
@@ -116,11 +120,43 @@ async function usdcPaidTo(txHash: Hash, recipient: string): Promise<bigint | nul
       const to = (event.args as { to: Address }).to;
       if (to.toLowerCase() !== recipient.toLowerCase()) continue;
       total += (event.args as { value: bigint }).value;
+      // First transfer that actually credits the recipient names the payer.
+      if (payer === null) payer = (event.args as { from: Address }).from;
     } catch {
       // Not a Transfer log we can decode — ignore it.
     }
   }
-  return total;
+  return { total, payer };
+}
+
+/**
+ * Record a settled x402 payment so the revenue rail has a row, not just a
+ * spent-receipt marker. Never fails the request: the caller has already paid
+ * and verification succeeded, so a bookkeeping error must not cost them the
+ * response. `tx_hash` carries a UNIQUE constraint, which makes this idempotent.
+ */
+async function recordPaymentEvent(
+  txHash: string,
+  payer: string | null,
+  recipient: string,
+  paid: bigint,
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO payment_events (tx_hash, from_address, to_address, amount_usdc, token)
+       VALUES ($1, $2, $3, $4, 'USDC')
+       ON CONFLICT (tx_hash) DO NOTHING`,
+      [
+        txHash.toLowerCase(),
+        payer ? payer.toLowerCase() : null,
+        recipient.toLowerCase(),
+        // Keep the exact base-unit value out of float arithmetic.
+        `${paid / 1_000_000n}.${(paid % 1_000_000n).toString().padStart(6, '0')}`,
+      ],
+    );
+  } catch (err: any) {
+    console.error('[x402] payment_events insert failed:', err?.message ?? err);
+  }
 }
 
 /**
@@ -166,11 +202,18 @@ export async function verifyPayment(
     };
   }
 
-  let paid: bigint | null;
+  let settlement: { total: bigint; payer: string | null } | null;
   try {
-    paid = await usdcPaidTo(rawHash as Hash, recipient);
+    settlement = await usdcPaidTo(rawHash as Hash, recipient);
   } catch (err: any) {
     await releaseTxHash(rawHash);
+    // viem throws instead of returning null when the hash is simply unknown to
+    // the chain. That is a client-supplied bad receipt, not an outage on our
+    // side, and reporting it as 'chain_unavailable' sends operators hunting for
+    // an RPC problem that does not exist.
+    if (err?.name === 'TransactionReceiptNotFoundError') {
+      return { ok: false, reason: 'tx_not_settled', detail: 'Transaction not found or reverted.' };
+    }
     return {
       ok: false,
       reason: 'chain_unavailable',
@@ -178,10 +221,11 @@ export async function verifyPayment(
     };
   }
 
-  if (paid === null) {
+  if (settlement === null) {
     await releaseTxHash(rawHash);
     return { ok: false, reason: 'tx_not_settled', detail: 'Transaction not found or reverted.' };
   }
+  const paid = settlement.total;
   if (paid < required) {
     await releaseTxHash(rawHash);
     return {
@@ -191,7 +235,9 @@ export async function verifyPayment(
     };
   }
 
-  return { ok: true, txHash: rawHash, paid };
+  await recordPaymentEvent(rawHash, settlement.payer, recipient, paid);
+
+  return { ok: true, txHash: rawHash, paid, payer: settlement.payer };
 }
 
 export const __testing = { parseReceiptHeader, usdcPaidTo };
