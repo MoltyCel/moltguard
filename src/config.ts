@@ -12,6 +12,12 @@ export const CONFIG = {
   baseRpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
   basescanApiKey: process.env.BASESCAN_API_KEY || null,
   facilitatorUrl: process.env.FACILITATOR_URL || 'https://x402.org/facilitator',
+  // Settlement is synchronous: the caller waits while the facilitator lands the
+  // transaction, because a 200 is only honest once the transfer is on-chain.
+  facilitatorTimeoutMs: parseInt(process.env.FACILITATOR_TIMEOUT_MS || '15000'),
+  // Left facilitator-agnostic on purpose. A self-hosted facilitator behind a
+  // bearer token and CDP with a minted JWT both arrive through this variable.
+  facilitatorAuthHeader: process.env.FACILITATOR_AUTH_HEADER || null,
   chainId: isTestnet ? 84532 : 8453,
   network: (isTestnet ? 'eip155:84532' : 'eip155:8453') as string,
   erc8004Registry: process.env.ERC8004_REGISTRY || null,
