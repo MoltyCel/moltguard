@@ -69,25 +69,32 @@ export async function settle(
     clearTimeout(timer);
   }
 
-  // 5xx is the facilitator failing, not the payer. Treated like a timeout: the
-  // caller is told to settle the transfer themselves.
-  if (response.status >= 500) {
-    return {
-      ok: false,
-      reason: 'facilitator_unavailable',
-      detail: `Facilitator answered ${response.status}.`,
-      unreachable: true,
-    };
-  }
-
   let body: SettleResponse;
   try {
     body = (await response.json()) as SettleResponse;
   } catch {
+    // No decision came back, whatever the status line said.
     return {
       ok: false,
       reason: 'facilitator_unavailable',
       detail: `Facilitator answered ${response.status} with a body that is not JSON.`,
+      unreachable: true,
+    };
+  }
+
+  // A 5xx is not automatically an outage. x402.org answers a request for a
+  // network it does not serve with HTTP 500 and
+  //   "No facilitator registered for scheme: exact and network: eip155:8453"
+  // (observed live, 2026-09-14). Reporting that as "unavailable" sends an
+  // operator to check uptime when the configuration is what is wrong, so a
+  // 5xx that still carries a reason is passed through as the facilitator's own
+  // words. Either way the caller gets a 402 and the direct-transfer path.
+  const stated = body.errorReason ?? body.error;
+  if (response.status >= 500 && !stated) {
+    return {
+      ok: false,
+      reason: 'facilitator_unavailable',
+      detail: `Facilitator answered ${response.status} without a reason.`,
       unreachable: true,
     };
   }
@@ -97,8 +104,7 @@ export async function settle(
     return {
       ok: false,
       reason: 'settlement_rejected',
-      detail:
-        body.errorReason ?? body.error ?? `Facilitator declined to settle (HTTP ${response.status}).`,
+      detail: stated ?? `Facilitator declined to settle (HTTP ${response.status}).`,
       unreachable: false,
     };
   }
