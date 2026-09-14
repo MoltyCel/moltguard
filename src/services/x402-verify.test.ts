@@ -49,6 +49,7 @@ function installQuery(claimed = true) {
     if (text.includes('CREATE TABLE IF NOT EXISTS x402_receipts')) return { rows: [], rowCount: 0 };
     if (text.includes('INSERT INTO x402_receipts')) return { rows: [], rowCount: claimed ? 1 : 0 };
     if (text.includes('DELETE FROM x402_receipts')) return { rows: [], rowCount: 1 };
+    if (text.includes('INSERT INTO payment_events')) return { rows: [], rowCount: 1 };
     throw new Error(`unexpected query: ${text.slice(0, 50)}`);
   });
 }
@@ -201,5 +202,78 @@ describe('verifyPayment', () => {
       String(c[0]).includes('DELETE FROM x402_receipts'),
     );
     expect(deletes).toHaveLength(1);
+  });
+});
+
+describe('payment_events bookkeeping', () => {
+  it('records a settled payment with payer, recipient and amount', async () => {
+    getTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      logs: [transferLog(WALLET, 50_000n)],
+    });
+
+    const result = await verifyPayment(
+      receiptHeader({ txHash: TX, network: 8453 }),
+      0.05,
+      '/api/agent/score',
+      WALLET,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.payer?.toLowerCase()).toBe(WALLET.toLowerCase());
+
+    const inserts = queryMock.mock.calls.filter((c) =>
+      String(c[0]).includes('INSERT INTO payment_events'),
+    );
+    expect(inserts).toHaveLength(1);
+
+    const params = inserts[0][1] as unknown[];
+    expect(params[0]).toBe(TX.toLowerCase());
+    expect(params[1]).toBe(WALLET.toLowerCase());
+    expect(params[2]).toBe(WALLET.toLowerCase());
+    // 50_000 base units must render as an exact decimal string, not a float.
+    expect(params[3]).toBe('0.050000');
+  });
+
+  it('still serves the paid request when the bookkeeping insert fails', async () => {
+    queryMock.mockImplementation(async (text: string) => {
+      if (text.includes('CREATE TABLE IF NOT EXISTS x402_receipts')) return { rows: [], rowCount: 0 };
+      if (text.includes('INSERT INTO x402_receipts')) return { rows: [], rowCount: 1 };
+      if (text.includes('INSERT INTO payment_events')) throw new Error('permission denied');
+      throw new Error(`unexpected query: ${text.slice(0, 50)}`);
+    });
+    getTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      logs: [transferLog(WALLET, 50_000n)],
+    });
+
+    const result = await verifyPayment(
+      receiptHeader({ txHash: TX, network: 8453 }),
+      0.05,
+      '/api/agent/score',
+      WALLET,
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('writes no row when the payment is short', async () => {
+    getTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      logs: [transferLog(WALLET, 10_000n)],
+    });
+
+    const result = await verifyPayment(
+      receiptHeader({ txHash: TX, network: 8453 }),
+      0.05,
+      '/api/agent/score',
+      WALLET,
+    );
+
+    expect(result.ok).toBe(false);
+    const inserts = queryMock.mock.calls.filter((c) =>
+      String(c[0]).includes('INSERT INTO payment_events'),
+    );
+    expect(inserts).toHaveLength(0);
   });
 });
