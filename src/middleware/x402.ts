@@ -27,10 +27,19 @@ function getPrice(method: string, path: string): number | null {
   const key = `${method} ${path}`;
   if (X402_PRICES[key] !== undefined) return X402_PRICES[key];
 
-  // Prefix match (e.g. "GET /api/agent/score" matches "/api/agent/score/:address")
+  // Prefix match on a path boundary (e.g. "GET /api/agent/score" matches
+  // "/api/agent/score/:address").
+  //
+  // A bare startsWith also matched "/api/agent/score-free" against
+  // "/api/agent/score", and "/api/market/check-free" against
+  // "/api/market/check". Both are free endpoints that only stayed free because
+  // isFree() happens to run first — a free route that shares a prefix with a
+  // priced one should not depend on the order of two checks in another
+  // function.
   for (const [pattern, price] of Object.entries(X402_PRICES)) {
     const [pMethod, pPath] = pattern.split(' ');
-    if (method === pMethod && path.startsWith(pPath)) return price;
+    if (method !== pMethod) continue;
+    if (path === pPath || path.startsWith(pPath + '/')) return price;
   }
   return null;
 }

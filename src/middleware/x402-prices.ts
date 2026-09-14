@@ -7,7 +7,6 @@ export const X402_PRICES: Record<string, number> = {
   'GET /api/agent/detail':      0.05,
   'GET /api/sybil/scan':        0.10,
   'GET /api/market/check':      0.05,
-  'GET /api/market/feed':       0.10,
   'POST /api/credential/issue': 0.10,
 
   // Skill Verification
@@ -33,6 +32,12 @@ export const X402_FREE_PATHS = [
   '/api/market/sample',
   '/api/agent/score-free',
   '/api/market/check-free',
+  // Free by publication: /.well-known/x402.json has listed this under
+  // `free` since it was written, while the price table charged 0.10 for
+  // it. Agents believed the document and got a 402 — 77 of them in the
+  // 30 days to 2026-09-14, the busiest 402 on any endpoint. The document
+  // is the published promise, so the price is what gives way.
+  '/api/market/feed',
   '/api/credential/verify',
   '/prediction/wallet-link',
   '/prediction/wallet',
