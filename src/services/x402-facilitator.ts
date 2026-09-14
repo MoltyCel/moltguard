@@ -22,6 +22,7 @@ interface SettleResponse {
   network?: string;
   payer?: string;
   errorReason?: string;
+  errorMessage?: string;
   error?: string;
 }
 
@@ -89,7 +90,13 @@ export async function settle(
   // operator to check uptime when the configuration is what is wrong, so a
   // 5xx that still carries a reason is passed through as the facilitator's own
   // words. Either way the caller gets a 402 and the direct-transfer path.
-  const stated = body.errorReason ?? body.error;
+  // errorMessage first. x402.org pairs a generic errorReason ("unexpected_error")
+  // with the message that actually says what went wrong ("No facilitator
+  // registered for scheme: exact and network: eip155:8453"). Reading the
+  // reason first surfaced the useless half — observed live on 2026-09-14,
+  // where the 402 carried paymentErrorDetail "unexpected_error" and nothing
+  // an operator could act on.
+  const stated = body.errorMessage ?? body.error ?? body.errorReason;
   if (response.status >= 500 && !stated) {
     return {
       ok: false,
