@@ -10,6 +10,11 @@ vi.mock('./db.js', () => ({
   default: {},
 }));
 
+const settleMock = vi.fn();
+vi.mock('./x402-facilitator.js', () => ({
+  settle: (payload: unknown, requirements: unknown) => settleMock(payload, requirements),
+}));
+
 const getTransactionReceipt = vi.fn();
 vi.mock('viem', async (importOriginal) => {
   const actual = await importOriginal<typeof import('viem')>();
@@ -47,6 +52,10 @@ function receiptHeader(payload: Record<string, unknown>): string {
 function installQuery(claimed = true) {
   queryMock.mockImplementation(async (text: string) => {
     if (text.includes('CREATE TABLE IF NOT EXISTS x402_receipts')) return { rows: [], rowCount: 0 };
+    if (text.includes('CREATE TABLE IF NOT EXISTS x402_authorizations')) return { rows: [], rowCount: 0 };
+    if (text.includes('INSERT INTO x402_authorizations')) return { rows: [], rowCount: 1 };
+    if (text.includes('UPDATE x402_authorizations')) return { rows: [], rowCount: 1 };
+    if (text.includes('DELETE FROM x402_authorizations')) return { rows: [], rowCount: 1 };
     if (text.includes('INSERT INTO x402_receipts')) return { rows: [], rowCount: claimed ? 1 : 0 };
     if (text.includes('DELETE FROM x402_receipts')) return { rows: [], rowCount: 1 };
     if (text.includes('INSERT INTO payment_events')) return { rows: [], rowCount: 1 };
@@ -57,6 +66,7 @@ function installQuery(claimed = true) {
 beforeEach(() => {
   queryMock.mockReset();
   getTransactionReceipt.mockReset();
+  settleMock.mockReset();
   installQuery(true);
 });
 
@@ -238,6 +248,10 @@ describe('payment_events bookkeeping', () => {
   it('still serves the paid request when the bookkeeping insert fails', async () => {
     queryMock.mockImplementation(async (text: string) => {
       if (text.includes('CREATE TABLE IF NOT EXISTS x402_receipts')) return { rows: [], rowCount: 0 };
+    if (text.includes('CREATE TABLE IF NOT EXISTS x402_authorizations')) return { rows: [], rowCount: 0 };
+    if (text.includes('INSERT INTO x402_authorizations')) return { rows: [], rowCount: 1 };
+    if (text.includes('UPDATE x402_authorizations')) return { rows: [], rowCount: 1 };
+    if (text.includes('DELETE FROM x402_authorizations')) return { rows: [], rowCount: 1 };
       if (text.includes('INSERT INTO x402_receipts')) return { rows: [], rowCount: 1 };
       if (text.includes('INSERT INTO payment_events')) throw new Error('permission denied');
       throw new Error(`unexpected query: ${text.slice(0, 50)}`);
@@ -276,4 +290,190 @@ describe('payment_events bookkeeping', () => {
     );
     expect(inserts).toHaveLength(0);
   });
+});
+
+// ---------------------------------------------------------------------------
+// EIP-3009: the payer signs, a facilitator pays the gas.
+// ---------------------------------------------------------------------------
+
+const PAYER = '0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38';
+const SETTLED_TX = '0x' + 'cd'.repeat(32);
+
+function authorization(overrides: Record<string, unknown> = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  // authorization and payload are merged into their nesting level; everything
+  // else overrides at the top. Spreading `overrides` wholesale would replace
+  // the whole payload object and silently drop the authorization with it,
+  // which turns a signature test into a tx-hash test.
+  const { authorization: authOverride, payload: payloadOverride, ...top } = overrides;
+  return {
+    x402Version: 2,
+    scheme: 'exact',
+    network: 'eip155:8453',
+    ...top,
+    payload: {
+      signature: '0x' + '11'.repeat(65),
+      ...((payloadOverride as object) ?? {}),
+      authorization: {
+        from: PAYER,
+        to: WALLET,
+        value: '50000',
+        validAfter: '0',
+        validBefore: String(now + 3600),
+        nonce: '0x' + 'ab'.repeat(32),
+        ...((authOverride as object) ?? {}),
+      },
+    },
+  };
+}
+
+function authHeader(overrides: Record<string, unknown> = {}): string {
+  return receiptHeader(authorization(overrides) as unknown as Record<string, unknown>);
+}
+
+describe('EIP-3009 settlement', () => {
+  it('settles through the facilitator and serves once the transfer is on-chain', async () => {
+    settleMock.mockResolvedValue({ ok: true, txHash: SETTLED_TX, payer: PAYER.toLowerCase() });
+    getTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      logs: [transferLog(WALLET, 50_000n)],
+    });
+
+    const result = await verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.txHash).toBe(SETTLED_TX);
+    expect(settleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the facilitator the same terms the challenge advertised', () => {
+    settleMock.mockResolvedValue({ ok: true, txHash: SETTLED_TX });
+    getTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      logs: [transferLog(WALLET, 50_000n)],
+    });
+
+    return verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET).then(() => {
+      const requirements = settleMock.mock.calls[0][1] as Record<string, unknown>;
+      expect(requirements.payTo).toBe(WALLET);
+      expect(requirements.maxAmountRequired).toBe('50000');
+      expect(requirements.scheme).toBe('exact');
+      expect(requirements.asset).toBe(USDC);
+    });
+  });
+
+  it('does not serve on a settle response alone', async () => {
+    // The facilitator names a transaction that is not on the chain.
+    settleMock.mockResolvedValue({ ok: true, txHash: SETTLED_TX });
+    getTransactionReceipt.mockRejectedValue(
+      Object.assign(new Error('not found'), { name: 'TransactionReceiptNotFoundError' }),
+    );
+
+    const result = await verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('tx_not_settled');
+  });
+
+  it('rejects a settlement that moved less than the price', async () => {
+    settleMock.mockResolvedValue({ ok: true, txHash: SETTLED_TX });
+    getTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      logs: [transferLog(WALLET, 10_000n)],
+    });
+
+    const result = await verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('insufficient_payment');
+  });
+
+  it('reports an unreachable facilitator as 402, never as a server error', async () => {
+    settleMock.mockResolvedValue({
+      ok: false,
+      reason: 'facilitator_unavailable',
+      detail: 'timeout',
+      unreachable: true,
+    });
+
+    const result = await verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('facilitator_unavailable');
+  });
+
+  it('frees the nonce when settlement fails, so the payer can retry', async () => {
+    settleMock.mockResolvedValue({
+      ok: false,
+      reason: 'facilitator_unavailable',
+      detail: 'timeout',
+      unreachable: true,
+    });
+
+    await verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET);
+
+    const releases = queryMock.mock.calls.filter((c) =>
+      String(c[0]).includes('DELETE FROM x402_authorizations'),
+    );
+    expect(releases).toHaveLength(1);
+  });
+
+  it('refuses a nonce that has already been used', async () => {
+    queryMock.mockImplementation(async (text: string) => {
+      if (text.includes('CREATE TABLE')) return { rows: [], rowCount: 0 };
+      if (text.includes('INSERT INTO x402_authorizations')) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 1 };
+    });
+
+    const result = await verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('authorization_replayed');
+    expect(settleMock).not.toHaveBeenCalled();
+  });
+
+  it('records the settled payment with the path that was paid for', async () => {
+    settleMock.mockResolvedValue({ ok: true, txHash: SETTLED_TX, payer: PAYER.toLowerCase() });
+    getTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      logs: [transferLog(WALLET, 50_000n)],
+    });
+
+    await verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET);
+
+    const inserts = queryMock.mock.calls.filter((c) =>
+      String(c[0]).includes('INSERT INTO payment_events'),
+    );
+    expect(inserts).toHaveLength(1);
+    const params = inserts[0][1] as unknown[];
+    expect(params[0]).toBe(SETTLED_TX);
+    expect(params[3]).toBe('0.050000');
+    expect(params[4]).toBe('/api/agent/score');
+  });
+});
+
+describe('EIP-3009 local validation', () => {
+  /** None of these may cost a facilitator call. */
+  const cases: Array<[string, Record<string, unknown>, string]> = [
+    ['a different recipient', { authorization: { to: '0x' + '99'.repeat(20) } }, 'wrong_recipient'],
+    ['less than the price', { authorization: { value: '10000' } }, 'insufficient_payment'],
+    [
+      'an expired authorization',
+      { authorization: { validBefore: String(Math.floor(Date.now() / 1000) - 10) } },
+      'authorization_expired',
+    ],
+    ['another chain', { network: 'eip155:84532' }, 'wrong_network'],
+    ['another scheme', { scheme: 'upto' }, 'unsupported_scheme'],
+    ['a malformed signature', { payload: { signature: '0xdead' } }, 'malformed_signature'],
+    ['a short nonce', { authorization: { nonce: '0xabcd' } }, 'malformed_authorization'],
+  ];
+
+  for (const [label, overrides, reason] of cases) {
+    it(`rejects ${label} without calling the facilitator`, async () => {
+      const result = await verifyPayment(authHeader(overrides), 0.05, '/api/agent/score', WALLET);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe(reason);
+      expect(settleMock).not.toHaveBeenCalled();
+    });
+  }
 });

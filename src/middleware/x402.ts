@@ -2,6 +2,7 @@ import type { Context, Next, MiddlewareHandler } from 'hono';
 import { query } from '../services/db.js';
 import { X402_PRICES, X402_FREE_PATHS } from './x402-prices.js';
 import { verifyPayment } from '../services/x402-verify.js';
+import { buildPaymentRequirements } from '../services/x402-authorization.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -124,23 +125,10 @@ export function createX402Middleware(): MiddlewareHandler {
         ...(failure ? { paymentError: failure.reason, paymentErrorDetail: failure.detail } : {}),
         x402: {
           version: '2',
-          accepts: [
-            {
-              scheme: 'exact',
-              network: `eip155:${BASE_CHAIN_ID}`,
-              amount: String(Math.round(price * 1e6)), // USDC has 6 decimals
-              resource: `https://api.moltrust.ch/guard${path}`,
-              description: `MolTrust API — ${path}`,
-              mimeType: 'application/json',
-              payTo: MOLTRUST_WALLET,
-              maxTimeoutSeconds: 300,
-              asset: USDC_CONTRACT,
-              extra: {
-                name: 'USD Coin',
-                version: '2',
-              },
-            },
-          ],
+          // Same function the settle call uses. Written out separately, the
+          // challenge and the settlement terms drift, and the facilitator then
+          // rejects a payment for an obligation we never advertised.
+          accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, MOLTRUST_WALLET)],
         },
       },
       402,

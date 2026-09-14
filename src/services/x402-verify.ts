@@ -17,6 +17,12 @@ import { createPublicClient, http, decodeEventLog, type Address, type Hash } fro
 import { base, baseSepolia } from 'viem/chains';
 import { CONFIG } from '../config.js';
 import { query } from './db.js';
+import {
+  buildPaymentRequirements,
+  checkAuthorization,
+  isAuthorizationPayload,
+} from './x402-authorization.js';
+import { settle } from './x402-facilitator.js';
 
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const USDC_DECIMALS = 6;
@@ -54,7 +60,23 @@ function ensureReplayTable(): Promise<void> {
         amount_usdc NUMERIC NOT NULL,
         seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
-    `).then(() => undefined);
+    `)
+      .then(() =>
+        // An EIP-3009 nonce is single-use on-chain, so this table is not what
+        // makes a replay impossible. It stops the second attempt before it
+        // costs a facilitator call and a reverted settlement.
+        query(`
+      CREATE TABLE IF NOT EXISTS x402_authorizations (
+        nonce       TEXT PRIMARY KEY,
+        payer       TEXT,
+        path        TEXT NOT NULL,
+        amount_usdc NUMERIC NOT NULL,
+        tx_hash     TEXT,
+        seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `),
+      )
+      .then(() => undefined);
   }
   return replayTableReady;
 }
@@ -135,28 +157,165 @@ async function usdcPaidTo(
  * and verification succeeded, so a bookkeeping error must not cost them the
  * response. `tx_hash` carries a UNIQUE constraint, which makes this idempotent.
  */
+let paymentEventsHasPath: boolean | null = null;
+
 async function recordPaymentEvent(
   txHash: string,
   payer: string | null,
   recipient: string,
   paid: bigint,
+  path: string,
 ): Promise<void> {
+  // Keep the exact base-unit value out of float arithmetic.
+  const amount = `${paid / 1_000_000n}.${(paid % 1_000_000n).toString().padStart(6, '0')}`;
+  const base = [txHash.toLowerCase(), payer ? payer.toLowerCase() : null, recipient.toLowerCase(), amount];
+
+  // payment_events is owned by the postgres role and this one may not ALTER it,
+  // so `path` arrives through a migration applied by hand. Until that lands the
+  // column is simply absent, and dropping the row entirely would lose a real
+  // payment over a reporting field. Probed once, then remembered.
+  if (paymentEventsHasPath !== false) {
+    try {
+      await query(
+        `INSERT INTO payment_events (tx_hash, from_address, to_address, amount_usdc, token, path)
+         VALUES ($1, $2, $3, $4, 'USDC', $5)
+         ON CONFLICT (tx_hash) DO NOTHING`,
+        [...base, path],
+      );
+      paymentEventsHasPath = true;
+      return;
+    } catch (err: any) {
+      if (err?.code !== '42703') {
+        console.error('[x402] payment_events insert failed:', err?.message ?? err);
+        return;
+      }
+      paymentEventsHasPath = false;
+      console.warn('[x402] payment_events has no path column yet — run the migration');
+    }
+  }
+
   try {
     await query(
       `INSERT INTO payment_events (tx_hash, from_address, to_address, amount_usdc, token)
        VALUES ($1, $2, $3, $4, 'USDC')
        ON CONFLICT (tx_hash) DO NOTHING`,
-      [
-        txHash.toLowerCase(),
-        payer ? payer.toLowerCase() : null,
-        recipient.toLowerCase(),
-        // Keep the exact base-unit value out of float arithmetic.
-        `${paid / 1_000_000n}.${(paid % 1_000_000n).toString().padStart(6, '0')}`,
-      ],
+      base,
     );
   } catch (err: any) {
     console.error('[x402] payment_events insert failed:', err?.message ?? err);
   }
+}
+
+/** Reserve an authorization nonce. False if it was already used. */
+async function claimNonce(nonce: string, path: string, amount: number): Promise<boolean> {
+  await ensureReplayTable();
+  const result = await query(
+    `INSERT INTO x402_authorizations (nonce, path, amount_usdc)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (nonce) DO NOTHING`,
+    [nonce, path, amount],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+async function releaseNonce(nonce: string): Promise<void> {
+  try {
+    await query('DELETE FROM x402_authorizations WHERE nonce = $1', [nonce]);
+  } catch {
+    // A stuck row costs one unusable nonce; failing the request is worse.
+  }
+}
+
+/**
+ * Settle an EIP-3009 authorization through the facilitator, then confirm the
+ * result on-chain before anything is served.
+ *
+ * The facilitator says a transaction exists. That is a claim, and it is checked
+ * with the same usdcPaidTo() the direct-transfer path uses — no 200 is issued
+ * on the strength of a signature or a /verify answer.
+ */
+async function settleAuthorization(
+  decoded: unknown,
+  expectedPrice: number,
+  path: string,
+  recipient: string,
+): Promise<VerifyOutcome> {
+  const checked = checkAuthorization(decoded, expectedPrice, recipient, CONFIG.network);
+  if (!checked.ok) {
+    return { ok: false, reason: checked.reason, detail: checked.detail };
+  }
+
+  const claimed = await claimNonce(checked.nonce, path, expectedPrice);
+  if (!claimed) {
+    return {
+      ok: false,
+      reason: 'authorization_replayed',
+      detail: 'This authorization nonce has already been used.',
+    };
+  }
+
+  const requirements = buildPaymentRequirements(path, expectedPrice, CONFIG.network, recipient);
+  const settled = await settle(checked.payload, requirements);
+  if (!settled.ok) {
+    await releaseNonce(checked.nonce);
+    return { ok: false, reason: settled.reason, detail: settled.detail };
+  }
+
+  if (!/^0x[a-fA-F0-9]{64}$/.test(settled.txHash)) {
+    await releaseNonce(checked.nonce);
+    return {
+      ok: false,
+      reason: 'settlement_rejected',
+      detail: `Facilitator returned "${settled.txHash}", which is not a transaction hash.`,
+    };
+  }
+
+  let settlement: { total: bigint; payer: string | null } | null;
+  try {
+    settlement = await usdcPaidTo(settled.txHash as Hash, recipient);
+  } catch (err: any) {
+    await releaseNonce(checked.nonce);
+    if (err?.name === 'TransactionReceiptNotFoundError') {
+      return {
+        ok: false,
+        reason: 'tx_not_settled',
+        detail: 'The facilitator named a transaction that is not on Base.',
+      };
+    }
+    return {
+      ok: false,
+      reason: 'chain_unavailable',
+      detail: `Could not read the settlement from Base: ${err?.message ?? 'unknown error'}`,
+    };
+  }
+
+  const required = BigInt(Math.round(expectedPrice * 10 ** USDC_DECIMALS));
+  if (settlement === null || settlement.total < required) {
+    await releaseNonce(checked.nonce);
+    return {
+      ok: false,
+      reason: 'insufficient_payment',
+      detail: `Settlement moved ${settlement?.total ?? 0n} of ${required} required (USDC base units).`,
+    };
+  }
+
+  // The nonce is spent; bind it to what settled it, and claim the hash in the
+  // direct-transfer ledger too so one payment cannot be reused through the
+  // other path.
+  try {
+    await query('UPDATE x402_authorizations SET nonce = nonce, payer = $2, tx_hash = $3 WHERE nonce = $1', [
+      checked.nonce,
+      checked.payer,
+      settled.txHash,
+    ]);
+  } catch {
+    // Bookkeeping only; the nonce row already blocks the replay.
+  }
+  await claimTxHash(settled.txHash, path, expectedPrice);
+
+  await recordPaymentEvent(settled.txHash, settlement.payer ?? checked.payer, recipient, settlement.total, path);
+
+  return { ok: true, txHash: settled.txHash, paid: settlement.total, payer: settlement.payer ?? checked.payer };
 }
 
 /**
@@ -172,6 +331,13 @@ export async function verifyPayment(
   const receipt = parseReceiptHeader(header);
   if (!receipt) {
     return { ok: false, reason: 'malformed_receipt', detail: 'Expected "x402 <base64-json>".' };
+  }
+
+  // An EIP-3009 authorization and a transaction hash are both valid receipts.
+  // They are told apart by shape, so a caller never has to declare which path
+  // it is using.
+  if (isAuthorizationPayload(receipt)) {
+    return settleAuthorization(receipt, expectedPrice, path, recipient);
   }
 
   const rawHash = String(receipt.txHash ?? receipt.transactionHash ?? '');
@@ -235,7 +401,7 @@ export async function verifyPayment(
     };
   }
 
-  await recordPaymentEvent(rawHash, settlement.payer, recipient, paid);
+  await recordPaymentEvent(rawHash, settlement.payer, recipient, paid, path);
 
   return { ok: true, txHash: rawHash, paid, payer: settlement.payer };
 }
