@@ -25,6 +25,7 @@ vi.mock('viem', async (importOriginal) => {
 });
 
 const { verifyPayment } = await import('./x402-verify.js');
+const { CONFIG } = await import('../config.js');
 
 const WALLET = '0x380238347e58435f40B4da1F1A045A271D5838F5';
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -299,6 +300,13 @@ describe('payment_events bookkeeping', () => {
 const PAYER = '0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38';
 const SETTLED_TX = '0x' + 'cd'.repeat(32);
 
+// CONFIG.network follows MOLTGUARD_WALLET: mainnet when it is set, Base Sepolia
+// when it is not. CI has no wallet, so hardcoding eip155:8453 made every case
+// below fail on wrong_network there while passing on a configured host. The
+// network under test is read from the same place the code reads it.
+const NETWORK = CONFIG.network;
+const OTHER_NETWORK = NETWORK === 'eip155:8453' ? 'eip155:84532' : 'eip155:8453';
+
 function authorization(overrides: Record<string, unknown> = {}) {
   const now = Math.floor(Date.now() / 1000);
   // authorization and payload are merged into their nesting level; everything
@@ -309,7 +317,7 @@ function authorization(overrides: Record<string, unknown> = {}) {
   return {
     x402Version: 2,
     scheme: 'exact',
-    network: 'eip155:8453',
+    network: NETWORK,
     ...top,
     payload: {
       signature: '0x' + '11'.repeat(65),
@@ -462,7 +470,7 @@ describe('EIP-3009 local validation', () => {
       { authorization: { validBefore: String(Math.floor(Date.now() / 1000) - 10) } },
       'authorization_expired',
     ],
-    ['another chain', { network: 'eip155:84532' }, 'wrong_network'],
+    ['another chain', { network: OTHER_NETWORK }, 'wrong_network'],
     ['another scheme', { scheme: 'upto' }, 'unsupported_scheme'],
     ['a malformed signature', { payload: { signature: '0xdead' } }, 'malformed_signature'],
     ['a short nonce', { authorization: { nonce: '0xabcd' } }, 'malformed_authorization'],
