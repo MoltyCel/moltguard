@@ -53,6 +53,21 @@ describe('settle error reporting', () => {
     if (!result.ok) expect(result.detail).toBe('insufficient_funds');
   });
 
+  it('names a credential rejection instead of blaming the facilitator', async () => {
+    fetchMock.mockResolvedValue({
+      status: 401,
+      json: async () => { throw new Error('Unauthorized is not JSON'); },
+    } as unknown as Response);
+
+    const result = await settle({}, {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('facilitator_auth_failed');
+      expect(result.detail).toContain('credentials');
+    }
+  });
+
   it('treats a 5xx with no reason as an outage', async () => {
     fetchMock.mockResolvedValue(jsonResponse(503, {}));
 

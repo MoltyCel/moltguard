@@ -10,6 +10,7 @@
 // rather than to an error the caller cannot act on.
 
 import { CONFIG } from '../config.js';
+import { isCdpEndpoint, mintCdpBearer } from './cdp-auth.js';
 
 export type SettleOutcome =
   | { ok: true; txHash: string; payer?: string }
@@ -26,11 +27,20 @@ interface SettleResponse {
   error?: string;
 }
 
-function authHeaders(): Record<string, string> {
-  // Deliberately facilitator-agnostic: a self-hosted facilitator behind a
-  // bearer token and CDP with a minted JWT both arrive through this variable.
-  const configured = CONFIG.facilitatorAuthHeader;
-  return configured ? { Authorization: configured } : {};
+function authHeaders(method: string, url: string): Record<string, string> {
+  // An explicit header wins: it is how a self-hosted facilitator behind a
+  // static token is configured, and how CDP auth can be overridden if it ever
+  // needs to be.
+  if (CONFIG.facilitatorAuthHeader) {
+    return { Authorization: CONFIG.facilitatorAuthHeader };
+  }
+  // CDP does not accept a static token. Each call carries a JWT naming the
+  // method, host and path it is valid for, so it is minted per request.
+  if (isCdpEndpoint(url)) {
+    const bearer = mintCdpBearer(method, url);
+    if (bearer) return { Authorization: bearer };
+  }
+  return {};
 }
 
 /**
@@ -52,7 +62,7 @@ export async function settle(
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      headers: { 'Content-Type': 'application/json', ...authHeaders('POST', url) },
       body: JSON.stringify({ paymentPayload, paymentRequirements }),
       signal: controller.signal,
     });
@@ -68,6 +78,18 @@ export async function settle(
     };
   } finally {
     clearTimeout(timer);
+  }
+
+  // Credentials are our problem, not the payer's and not an outage. Saying
+  // "unavailable" here sends an operator to check the facilitator's status page
+  // while the actual cause is a key this deployment holds.
+  if (response.status === 401 || response.status === 403) {
+    return {
+      ok: false,
+      reason: 'facilitator_auth_failed',
+      detail: `Facilitator rejected our credentials (HTTP ${response.status}).`,
+      unreachable: true,
+    };
   }
 
   let body: SettleResponse;
