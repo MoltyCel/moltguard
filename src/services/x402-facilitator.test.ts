@@ -116,3 +116,29 @@ describe('settle error reporting', () => {
     if (result.ok) expect(result.txHash).toBe(hash.toLowerCase());
   });
 });
+
+describe('settle request envelope', () => {
+  it('carries x402Version at the top level, taken from the payload', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { success: true, transaction: '0x' + '11'.repeat(32) }),
+    );
+
+    await settle({ x402Version: 2, accepted: {}, payload: {} }, { scheme: 'exact' });
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.x402Version).toBe(2);
+    expect(body.paymentPayload).toBeDefined();
+    expect(body.paymentRequirements).toBeDefined();
+  });
+
+  it('falls back to 2 when the payload does not say', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { success: true, transaction: '0x' + '22'.repeat(32) }),
+    );
+
+    await settle({ accepted: {}, payload: {} }, {});
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.x402Version).toBe(2);
+  });
+});
