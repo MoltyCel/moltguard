@@ -28,8 +28,17 @@ export interface Eip3009Authorization {
 
 export interface ExactEvmPayload {
   x402Version?: number;
-  scheme: string;
-  network: string;
+  resource?: { url: string; description: string; mimeType: string };
+  /** The offer the payer took, echoed back from the 402 challenge. */
+  accepted: {
+    scheme: string;
+    network: string;
+    asset?: string;
+    amount?: string;
+    payTo?: string;
+    maxTimeoutSeconds?: number;
+    extra?: Record<string, unknown>;
+  };
   payload: {
     signature: string;
     authorization: Eip3009Authorization;
@@ -67,19 +76,30 @@ export function checkAuthorization(
 ): AuthorizationCheck {
   const payload = decoded as ExactEvmPayload;
 
-  if (payload?.scheme !== 'exact') {
+  // Scheme and network live inside `accepted` in v2: the payer echoes the offer
+  // they took rather than restating it at the top level.
+  const accepted = payload?.accepted;
+  if (!accepted || typeof accepted !== 'object') {
     return {
       ok: false,
-      reason: 'unsupported_scheme',
-      detail: `Only the "exact" scheme is accepted, got "${payload?.scheme ?? 'none'}".`,
+      reason: 'malformed_authorization',
+      detail: 'payload.accepted is missing — echo back the offer you are paying.',
     };
   }
 
-  if (payload.network !== expectedNetwork) {
+  if (accepted.scheme !== 'exact') {
+    return {
+      ok: false,
+      reason: 'unsupported_scheme',
+      detail: `Only the "exact" scheme is accepted, got "${accepted.scheme ?? 'none'}".`,
+    };
+  }
+
+  if (accepted.network !== expectedNetwork) {
     return {
       ok: false,
       reason: 'wrong_network',
-      detail: `Payments settle on ${expectedNetwork}, got "${payload.network}".`,
+      detail: `Payments settle on ${expectedNetwork}, got "${accepted.network}".`,
     };
   }
 
@@ -204,18 +224,29 @@ export function buildPaymentRequirements(
   network: string,
   payTo: string,
 ) {
-  const amount = String(Math.round(price * 10 ** USDC_DECIMALS));
+  // Exactly the fields of PaymentRequirements in @x402/core. The earlier shape
+  // carried resource, description, mimeType and maxAmountRequired alongside
+  // these; in v2 the first three moved into ResourceInfo and the fourth is
+  // simply `amount`. CDP validates the payload against this schema and rejects
+  // anything else with "must match one of [x402V2PaymentPayload,
+  // x402V1PaymentPayload]".
+  void path;
   return {
     scheme: 'exact',
     network,
-    amount,
-    maxAmountRequired: amount,
-    resource: `https://api.moltrust.ch/guard${path}`,
-    description: `MolTrust API — ${path}`,
-    mimeType: 'application/json',
+    asset: USDC_CONTRACT_BASE,
+    amount: String(Math.round(price * 10 ** USDC_DECIMALS)),
     payTo,
     maxTimeoutSeconds: 300,
-    asset: USDC_CONTRACT_BASE,
     extra: { name: 'USD Coin', version: '2' },
+  };
+}
+
+/** ResourceInfo per @x402/core: what is being bought, separate from the terms. */
+export function buildResourceInfo(path: string) {
+  return {
+    url: `https://api.moltrust.ch/guard${path}`,
+    description: `MolTrust API — ${path}`,
+    mimeType: 'application/json',
   };
 }

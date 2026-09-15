@@ -19,6 +19,7 @@ import { CONFIG } from '../config.js';
 import { query } from './db.js';
 import {
   buildPaymentRequirements,
+  buildResourceInfo,
   checkAuthorization,
   isAuthorizationPayload,
 } from './x402-authorization.js';
@@ -263,7 +264,19 @@ async function settleAuthorization(
   }
 
   const requirements = buildPaymentRequirements(path, expectedPrice, CONFIG.network, recipient);
-  const settled = await settle(checked.payload, requirements);
+  // Hand the facilitator a PaymentPayload in the shape @x402/core defines:
+  // resource and accepted at the top, the scheme's own payload underneath.
+  // What the caller sent is normalised rather than forwarded, so a client that
+  // echoes a stale or edited offer cannot smuggle it past us into settlement.
+  const settled = await settle(
+    {
+      x402Version: 2,
+      resource: buildResourceInfo(path),
+      accepted: requirements,
+      payload: checked.payload.payload,
+    },
+    requirements,
+  );
   if (!settled.ok) {
     await releaseNonce(checked.nonce);
     return { ok: false, reason: settled.reason, detail: settled.detail };

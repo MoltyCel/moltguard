@@ -2,7 +2,7 @@ import type { Context, Next, MiddlewareHandler } from 'hono';
 import { query } from '../services/db.js';
 import { X402_PRICES, X402_FREE_PATHS } from './x402-prices.js';
 import { verifyPayment } from '../services/x402-verify.js';
-import { buildPaymentRequirements } from '../services/x402-authorization.js';
+import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -132,8 +132,13 @@ export function createX402Middleware(): MiddlewareHandler {
       {
         error: 'Payment Required',
         ...(failure ? { paymentError: failure.reason, paymentErrorDetail: failure.detail } : {}),
+        // PaymentRequired per @x402/core: x402Version as a number, resource
+        // beside accepts rather than inside each entry. The previous shape put
+        // version: '2' as a string and folded resource/description/mimeType
+        // into every offer, which is the v1 layout wearing a v2 label.
         x402: {
-          version: '2',
+          x402Version: 2,
+          resource: buildResourceInfo(path),
           // Same function the settle call uses. Written out separately, the
           // challenge and the settlement terms drift, and the facilitator then
           // rejects a payment for an obligation we never advertised.
