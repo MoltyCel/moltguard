@@ -63,7 +63,15 @@ export async function settle(
     response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders('POST', url) },
-      body: JSON.stringify({ paymentPayload, paymentRequirements }),
+      // x402Version rides on the envelope as well as inside the payload. The
+      // library's own HTTPFacilitatorClient sends it this way
+      // (@x402/core chunk-FHAPZPSN.mjs:619), and CDP rejects a body without it:
+      // "doesn't match schema: property \"x402Version\" is missing".
+      body: JSON.stringify({
+        x402Version: (paymentPayload as { x402Version?: number })?.x402Version ?? 2,
+        paymentPayload,
+        paymentRequirements,
+      }),
       signal: controller.signal,
     });
   } catch (err: any) {
