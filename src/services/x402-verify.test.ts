@@ -311,16 +311,40 @@ const OTHER_NETWORK = NETWORK === 'eip155:8453' ? 'eip155:84532' : 'eip155:8453'
 
 function authorization(overrides: Record<string, unknown> = {}) {
   const now = Math.floor(Date.now() / 1000);
-  // authorization and payload are merged into their nesting level; everything
-  // else overrides at the top. Spreading `overrides` wholesale would replace
-  // the whole payload object and silently drop the authorization with it,
-  // which turns a signature test into a tx-hash test.
-  const { authorization: authOverride, payload: payloadOverride, ...top } = overrides;
+  // Shape per @x402/core PaymentPayload: resource and accepted at the top, the
+  // scheme payload underneath. `scheme` and `network` overrides are routed into
+  // accepted, which is where v2 puts them.
+  //
+  // authorization, payload and accepted merge into their own nesting level;
+  // everything else overrides at the top. Spreading `overrides` wholesale would
+  // replace the whole payload object and silently drop the authorization with
+  // it, turning a signature test into a tx-hash test.
+  const {
+    authorization: authOverride,
+    payload: payloadOverride,
+    accepted: acceptedOverride,
+    scheme,
+    network,
+    ...top
+  } = overrides;
   return {
     x402Version: 2,
-    scheme: 'exact',
-    network: NETWORK,
+    resource: {
+      url: 'https://api.moltrust.ch/guard/api/agent/score',
+      description: 'MolTrust API — /api/agent/score',
+      mimeType: 'application/json',
+    },
     ...top,
+    accepted: {
+      scheme: (scheme as string) ?? 'exact',
+      network: (network as string) ?? NETWORK,
+      asset: USDC,
+      amount: '50000',
+      payTo: WALLET,
+      maxTimeoutSeconds: 300,
+      extra: { name: 'USD Coin', version: '2' },
+      ...((acceptedOverride as object) ?? {}),
+    },
     payload: {
       signature: '0x' + '11'.repeat(65),
       ...((payloadOverride as object) ?? {}),
@@ -366,9 +390,19 @@ describe('EIP-3009 settlement', () => {
     return verifyPayment(authHeader(), 0.05, '/api/agent/score', WALLET).then(() => {
       const requirements = settleMock.mock.calls[0][1] as Record<string, unknown>;
       expect(requirements.payTo).toBe(WALLET);
-      expect(requirements.maxAmountRequired).toBe('50000');
+      expect(requirements.amount).toBe('50000');
       expect(requirements.scheme).toBe('exact');
       expect(requirements.asset).toBe(USDC);
+      // v2 dropped these from the terms; they live in ResourceInfo now.
+      expect(requirements.maxAmountRequired).toBeUndefined();
+      expect(requirements.resource).toBeUndefined();
+
+      // The payload we forward is normalised, not the caller's copy.
+      const sent = settleMock.mock.calls[0][0] as Record<string, any>;
+      expect(sent.x402Version).toBe(2);
+      expect(sent.accepted).toEqual(requirements);
+      expect(sent.resource.url).toContain('/guard/api/agent/score');
+      expect(sent.payload.authorization.nonce).toBe('0x' + 'ab'.repeat(32));
     });
   });
 
