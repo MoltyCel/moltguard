@@ -157,6 +157,9 @@ async function usdcPaidTo(
  * and verification succeeded, so a bookkeeping error must not cost them the
  * response. `tx_hash` carries a UNIQUE constraint, which makes this idempotent.
  */
+/** Which rail settled a payment. x402_receipts.path already holds the endpoint. */
+export type PaymentRail = 'transfer' | 'eip3009';
+
 let paymentEventsHasPath: boolean | null = null;
 
 async function recordPaymentEvent(
@@ -164,15 +167,20 @@ async function recordPaymentEvent(
   payer: string | null,
   recipient: string,
   paid: bigint,
-  path: string,
+  rail: PaymentRail,
 ): Promise<void> {
   // Keep the exact base-unit value out of float arithmetic.
   const amount = `${paid / 1_000_000n}.${(paid % 1_000_000n).toString().padStart(6, '0')}`;
   const base = [txHash.toLowerCase(), payer ? payer.toLowerCase() : null, recipient.toLowerCase(), amount];
 
+  // `path` records which rail settled the payment, not the endpoint — the
+  // endpoint is already in x402_receipts.path, and what payment_events could
+  // not answer was whether the money arrived by a transfer the payer broadcast
+  // or by an authorization a facilitator submitted.
+  //
   // payment_events is owned by the postgres role and this one may not ALTER it,
-  // so `path` arrives through a migration applied by hand. Until that lands the
-  // column is simply absent, and dropping the row entirely would lose a real
+  // so the column arrives through a migration applied by hand. Until that lands
+  // it is simply absent, and dropping the row entirely would lose a real
   // payment over a reporting field. Probed once, then remembered.
   if (paymentEventsHasPath !== false) {
     try {
@@ -180,7 +188,7 @@ async function recordPaymentEvent(
         `INSERT INTO payment_events (tx_hash, from_address, to_address, amount_usdc, token, path)
          VALUES ($1, $2, $3, $4, 'USDC', $5)
          ON CONFLICT (tx_hash) DO NOTHING`,
-        [...base, path],
+        [...base, rail],
       );
       paymentEventsHasPath = true;
       return;
@@ -313,7 +321,13 @@ async function settleAuthorization(
   }
   await claimTxHash(settled.txHash, path, expectedPrice);
 
-  await recordPaymentEvent(settled.txHash, settlement.payer ?? checked.payer, recipient, settlement.total, path);
+  await recordPaymentEvent(
+    settled.txHash,
+    settlement.payer ?? checked.payer,
+    recipient,
+    settlement.total,
+    'eip3009',
+  );
 
   return { ok: true, txHash: settled.txHash, paid: settlement.total, payer: settlement.payer ?? checked.payer };
 }
@@ -401,7 +415,7 @@ export async function verifyPayment(
     };
   }
 
-  await recordPaymentEvent(rawHash, settlement.payer, recipient, paid, path);
+  await recordPaymentEvent(rawHash, settlement.payer, recipient, paid, 'transfer');
 
   return { ok: true, txHash: rawHash, paid, payer: settlement.payer };
 }

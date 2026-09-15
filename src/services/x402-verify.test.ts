@@ -244,6 +244,8 @@ describe('payment_events bookkeeping', () => {
     expect(params[2]).toBe(WALLET.toLowerCase());
     // 50_000 base units must render as an exact decimal string, not a float.
     expect(params[3]).toBe('0.050000');
+    // A transfer the payer broadcast, not a facilitator settlement.
+    expect(params[4]).toBe('transfer');
   });
 
   it('still serves the paid request when the bookkeeping insert fails', async () => {
@@ -440,7 +442,7 @@ describe('EIP-3009 settlement', () => {
     expect(settleMock).not.toHaveBeenCalled();
   });
 
-  it('records the settled payment with the path that was paid for', async () => {
+  it('records the settled payment against the eip3009 rail', async () => {
     settleMock.mockResolvedValue({ ok: true, txHash: SETTLED_TX, payer: PAYER.toLowerCase() });
     getTransactionReceipt.mockResolvedValue({
       status: 'success',
@@ -456,7 +458,8 @@ describe('EIP-3009 settlement', () => {
     const params = inserts[0][1] as unknown[];
     expect(params[0]).toBe(SETTLED_TX);
     expect(params[3]).toBe('0.050000');
-    expect(params[4]).toBe('/api/agent/score');
+    // The rail, not the endpoint — x402_receipts.path already holds the endpoint.
+    expect(params[4]).toBe('eip3009');
   });
 });
 
