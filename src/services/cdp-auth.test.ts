@@ -73,12 +73,14 @@ describe('mintCdpBearer', () => {
 
     expect(claims.sub).toBe(KEY_ID);
     expect(claims.iss).toBe('cdp');
-    expect(claims.aud).toEqual(['cdp_service']);
-    // Bound to method, host and path: a captured bearer cannot be pointed
-    // at another endpoint. Singular `uri` and a string — the plural array is
-    // the wallet-token shape and CDP rejects it with a bare 401.
-    expect(claims.uri).toBe('POST api.cdp.coinbase.com/platform/v2/x402/settle');
-    expect(claims.uris).toBeUndefined();
+    // Bound to method, host and path: a captured bearer cannot be pointed at
+    // another endpoint. Shape verified against a token from
+    // @coinbase/cdp-sdk generateJwt() v1.56.0 — `uris` as an array, an `iat`,
+    // and no `aud`, none of which matches the reference docs.
+    expect(claims.uris).toEqual(['POST api.cdp.coinbase.com/platform/v2/x402/settle']);
+    expect(claims.uri).toBeUndefined();
+    expect(claims.aud).toBeUndefined();
+    expect(claims.iat).toBe(claims.nbf);
     expect(claims.exp - claims.nbf).toBe(120);
 
     const ok = verify(

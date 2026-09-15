@@ -100,18 +100,18 @@ export function mintCdpBearer(method: string, url: string): string | null {
     // rather than merely advisable.
     nonce: randomBytes(16).toString('hex'),
   };
+  // Shape taken from @coinbase/cdp-sdk generateJwt() v1.56.0, decoded from a
+  // token it produced, rather than from the reference docs: the docs describe a
+  // singular `uri` string and an `aud` of ["cdp_service"], and the SDK emits
+  // neither. Where the vendor's own client and the vendor's own documentation
+  // disagree, the client is what the server was built against.
   const claims = {
     sub: creds.keyId,
     iss: 'cdp',
-    aud: ['cdp_service'],
+    uris: [`${method.toUpperCase()} ${target.host}${target.pathname}`],
+    iat: now,
     nbf: now,
     exp: now + JWT_LIFETIME_SECONDS,
-    // Singular `uri`, and a string. CDP's wallet tokens use `uris` as an
-    // array; bearer tokens do not, and sending the array shape is accepted by
-    // nothing — it returns a bare 401 indistinguishable from a malformed
-    // token, which is how it survived a unit test that asserted the wrong
-    // spelling.
-    uri: `${method.toUpperCase()} ${target.host}${target.pathname}`,
   };
 
   const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
