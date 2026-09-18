@@ -41,6 +41,18 @@ export function checkAuditRateLimit(ip: string): boolean {
 
 // ── GitHub fetcher ──
 
+/**
+ * A fetch failure the caller caused: a URL we cannot parse, a SKILL.md that is
+ * not there, one that is too large. Carries the status the route should answer
+ * with, so "the repo has no SKILL.md" stops being reported as a server fault.
+ */
+export class SkillFetchError extends Error {
+  constructor(message: string, readonly status: 400 | 404 | 413, readonly code: string) {
+    super(message);
+    this.name = 'SkillFetchError';
+  }
+}
+
 export async function fetchSkillMd(githubUrl: string): Promise<{
   content: string;
   name: string;
@@ -52,7 +64,7 @@ export async function fetchSkillMd(githubUrl: string): Promise<{
     rawUrl = githubUrl;
   } else if (githubUrl.includes('github.com')) {
     const match = githubUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-    if (!match) throw new Error('Invalid GitHub URL');
+    if (!match) throw new SkillFetchError('Invalid GitHub URL', 400, 'invalid_url');
     const [, org, repo] = match;
     const cleanRepo = repo.replace(/\.git$/, '');
     rawUrl = `https://raw.githubusercontent.com/${org}/${cleanRepo}/main/SKILL.md`;
@@ -70,13 +82,13 @@ export async function fetchSkillMd(githubUrl: string): Promise<{
       // Try HEAD branch as fallback
       const headUrl = rawUrl.replace('/main/', '/HEAD/');
       const resp2 = await fetch(headUrl, { signal: controller.signal });
-      if (!resp2.ok) throw new Error(`SKILL.md not found (HTTP ${resp.status})`);
+      if (!resp2.ok) throw new SkillFetchError(`SKILL.md not found (HTTP ${resp.status})`, 404, 'skill_md_not_found');
       const content = await resp2.text();
-      if (content.length > MAX_SKILL_SIZE) throw new Error('SKILL.md exceeds 100KB limit');
+      if (content.length > MAX_SKILL_SIZE) throw new SkillFetchError('SKILL.md exceeds 100KB limit', 413, 'skill_md_too_large');
       return { content, ...extractMeta(content) };
     }
     const content = await resp.text();
-    if (content.length > MAX_SKILL_SIZE) throw new Error('SKILL.md exceeds 100KB limit');
+    if (content.length > MAX_SKILL_SIZE) throw new SkillFetchError('SKILL.md exceeds 100KB limit', 413, 'skill_md_too_large');
     return { content, ...extractMeta(content) };
   } finally {
     clearTimeout(timeout);
