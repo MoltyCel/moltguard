@@ -17,6 +17,7 @@ import {
   parseFrontmatter,
   getEcosystemTrustScore,
   AUDITOR_VERSION,
+  SkillFetchError,
   type AuditProfile,
 } from '../services/skill.js';
 
@@ -124,6 +125,11 @@ app.get('/skill/audit', async (c) => {
       passed: audit.score >= 70 && !audit.hard_fail,
     });
   } catch (e: any) {
+    // A repo without a SKILL.md is the ordinary case for this endpoint, not a
+    // fault on our side. Only what we did not anticipate is a 500.
+    if (e instanceof SkillFetchError) {
+      return c.json({ error: e.code, message: e.message }, e.status);
+    }
     return c.json({ error: 'audit_failed', message: e.message }, 500);
   }
 });
@@ -203,6 +209,9 @@ app.post('/vc/skill/issue', async (c) => {
 
     return c.json(vc, 201);
   } catch (e: any) {
+    if (e instanceof SkillFetchError) {
+      return c.json({ error: e.code, message: e.message }, e.status);
+    }
     return c.json({ error: 'issuance_failed', message: e.message }, 500);
   }
 });
