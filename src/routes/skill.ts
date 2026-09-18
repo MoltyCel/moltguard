@@ -54,7 +54,9 @@ app.get('/skill/info', (c) => {
     ],
     passingScore: 70,
     credentialExpiry: '90 days',
-    hashSpec: 'https://moltrust.ch/docs/skill-hash-spec',
+    // Was /docs/skill-hash-spec, which has always been a 404: /skill/info is
+    // a public contract and pointed at a page that never existed.
+    hashSpec: 'https://moltrust.ch/skill-hash-spec.html',
   });
 });
 
