@@ -18,6 +18,10 @@ import {
   getEcosystemTrustScore,
   AUDITOR_VERSION,
   SkillFetchError,
+  recordAudit,
+  normalizeSkillHash,
+  getAuditByHash,
+  credentialExistsForHash,
   type AuditProfile,
 } from '../services/skill.js';
 
@@ -107,6 +111,16 @@ app.get('/skill/audit', async (c) => {
     // that linters can't provide.
     const fm = parseFrontmatter(content);
     const ecosystemTrust = await getEcosystemTrustScore(fm?.author);
+    const passed = audit.score >= 70 && !audit.hard_fail;
+
+    // Keep the verdict against the hash so /skill/vet-free can answer for these
+    // exact bytes later without a second GitHub fetch. Best-effort: a caller
+    // waiting on an audit should not be made to wait on our bookkeeping, nor
+    // lose the answer if it fails.
+    recordAudit({
+      skillHash, skillName: name, skillVersion: version, githubUrl: url, profile,
+      score: audit.score, passed, findings: audit.findings, auditorVersion: AUDITOR_VERSION,
+    }).catch((e) => console.warn('[skill] recordAudit failed:', e?.message));
 
     return c.json({
       skillName: name,
@@ -124,7 +138,7 @@ app.get('/skill/audit', async (c) => {
         ...(audit.mcp_scan && { mcp_scan: audit.mcp_scan }),
       },
       ecosystem_trust_score: ecosystemTrust, // null if author DID unknown / not a MolTrust DID
-      passed: audit.score >= 70 && !audit.hard_fail,
+      passed,
     });
   } catch (e: any) {
     // A repo without a SKILL.md is the ordinary case for this endpoint, not a
@@ -219,6 +233,50 @@ app.post('/vc/skill/issue', async (c) => {
 });
 
 // Free: verify a skill by its canonical hash
+// Free: what the checks said about exactly these bytes.
+//
+// The audit is a pure function of the file, so once a hash has been audited the
+// verdict can be handed back without fetching GitHub again and without the
+// caller spending anything. This is the self-use half of the line: it tells you
+// whether to install a skill. The signed credential you show a third party is
+// /vc/skill/issue and stays paid.
+app.get('/skill/vet-free/:skillHash', async (c) => {
+  const skillHash = normalizeSkillHash(c.req.param('skillHash'));
+  if (!skillHash) {
+    return c.json({
+      error: 'invalid_hash',
+      message: 'Expected a canonical skill hash: sha256:<64 hex chars>',
+    }, 400);
+  }
+
+  const row = await getAuditByHash(skillHash);
+  if (!row) {
+    return c.json({
+      error: 'not_audited',
+      message: 'No audit on record for this hash. Run GET /skill/audit?url=<repo> first.',
+      skillHash,
+    }, 404);
+  }
+
+  return c.json({
+    skillHash: row.skill_hash,
+    skillName: row.skill_name,
+    skillVersion: row.skill_version,
+    repositoryUrl: row.github_url,
+    profile: row.profile,
+    audit: {
+      score: row.score,
+      findings: row.findings,
+      auditorVersion: row.auditor_version,
+    },
+    passed: row.passed,
+    auditedAt: row.audited_at,
+    // Whether a signed credential exists for these bytes — not the credential
+    // itself. That one is /skill/verify/:skillHash.
+    credentialIssued: await credentialExistsForHash(skillHash),
+  });
+});
+
 app.get('/skill/verify/:skillHash', async (c) => {
   const skillHash = c.req.param('skillHash');
   const vc = await getVCByHash(skillHash);
