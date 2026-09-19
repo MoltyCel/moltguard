@@ -1026,3 +1026,91 @@ export async function getAnchorInfo(skillHash: string): Promise<{anchor_tx: stri
   return { anchor_tx: null, anchor_block: null };
 }
 
+
+// ── Free audit cache (vet-free) ──────────────────────────────────────────────
+// /skill/audit costs a repo fetch and a full pass over the file, and its answer
+// is a pure function of the bytes it read. Keeping the verdict against the
+// canonical hash lets anyone ask "what did the checks say about exactly these
+// bytes" without paying for a credential and without us fetching GitHub again.
+//
+// It stays on the free side of the line deliberately: the score and the
+// findings tell you about a skill you are deciding whether to install. The
+// signed credential you hand to a third party is the paid half and keeps its
+// own route.
+
+let auditCacheReady: Promise<void> | null = null;
+
+function ensureAuditCacheTable(): Promise<void> {
+  if (!auditCacheReady) {
+    auditCacheReady = query(`
+      CREATE TABLE IF NOT EXISTS skill_audits (
+        skill_hash      TEXT PRIMARY KEY,
+        skill_name      TEXT,
+        skill_version   TEXT,
+        github_url      TEXT,
+        profile         TEXT NOT NULL,
+        score           INTEGER NOT NULL,
+        passed          BOOLEAN NOT NULL,
+        findings        JSONB NOT NULL DEFAULT '[]'::jsonb,
+        auditor_version TEXT NOT NULL,
+        audited_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).then(() => undefined);
+  }
+  return auditCacheReady;
+}
+
+export async function recordAudit(row: {
+  skillHash: string;
+  skillName: string;
+  skillVersion: string;
+  githubUrl: string;
+  profile: string;
+  score: number;
+  passed: boolean;
+  findings: unknown;
+  auditorVersion: string;
+}): Promise<void> {
+  await ensureAuditCacheTable();
+  // Same hash, same bytes, so a re-audit can only differ by auditor version —
+  // in which case the newer verdict is the one worth keeping.
+  await query(
+    `INSERT INTO skill_audits
+       (skill_hash, skill_name, skill_version, github_url, profile, score, passed, findings, auditor_version, audited_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+     ON CONFLICT (skill_hash) DO UPDATE SET
+       skill_name = EXCLUDED.skill_name,
+       skill_version = EXCLUDED.skill_version,
+       github_url = EXCLUDED.github_url,
+       profile = EXCLUDED.profile,
+       score = EXCLUDED.score,
+       passed = EXCLUDED.passed,
+       findings = EXCLUDED.findings,
+       auditor_version = EXCLUDED.auditor_version,
+       audited_at = NOW()`,
+    [row.skillHash, row.skillName, row.skillVersion, row.githubUrl, row.profile,
+     row.score, row.passed, JSON.stringify(row.findings), row.auditorVersion],
+  );
+}
+
+export async function getAuditByHash(skillHash: string): Promise<any | null> {
+  await ensureAuditCacheTable();
+  const res = await query(
+    `SELECT skill_hash, skill_name, skill_version, github_url, profile,
+            score, passed, findings, auditor_version, audited_at
+       FROM skill_audits WHERE skill_hash = $1`,
+    [skillHash],
+  );
+  return res.rows[0] ?? null;
+}
+
+export async function credentialExistsForHash(skillHash: string): Promise<boolean> {
+  const res = await query('SELECT 1 FROM skill_credentials WHERE skill_hash = $1 LIMIT 1', [skillHash]);
+  return res.rows.length > 0;
+}
+
+/** Accept both the prefixed form the audit returns and a bare hex digest. */
+export function normalizeSkillHash(raw: string): string | null {
+  const withPrefix = raw.startsWith('sha256:') ? raw : `sha256:${raw}`;
+  return /^sha256:[0-9a-f]{64}$/.test(withPrefix) ? withPrefix : null;
+}
