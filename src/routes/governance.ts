@@ -5,6 +5,29 @@ import { SIGNAL_TYPE_V2, ATTESTATION_VERSION_CURRENT } from '../services/attesta
 
 const app = new Hono();
 
+/**
+ * How long an authorization decision stays good for.
+ *
+ * One hour by default, and that default is the opinion: a decision that
+ * outlives the constraints it was made under is not a decision, it is a
+ * standing permission somebody forgot to revoke.
+ *
+ * The cap exists because the default alone was too strict for one real case.
+ * A sample attestation handed to a reviewer has to survive being read, and an
+ * hour does not. Seven days is what that needs and is the most this will ever
+ * issue; a caller asking for more gets the cap rather than an error, because
+ * refusing the whole request over an optimistic number helps nobody.
+ */
+export const DEFAULT_VALIDITY_HOURS = 1;
+export const MAX_VALIDITY_HOURS = 24 * 7;
+
+export function validityHours(requested: unknown): number {
+  if (requested === undefined || requested === null) return DEFAULT_VALIDITY_HOURS;
+  const n = Number(requested);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_VALIDITY_HOURS;
+  return Math.min(n, MAX_VALIDITY_HOURS);
+}
+
 function scoreToGrade(score: number): number {
   if (score >= 75) return 3;
   if (score >= 50) return 2;
@@ -216,7 +239,7 @@ app.post('/governance/validate-capabilities', async (c) => {
 
   const requestedAmount: number | undefined = body.max_amount_usd;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 3600 * 1000);
+  const expiresAt = new Date(now.getTime() + validityHours(body.validity_hours) * 3600 * 1000);
 
   // 1. Resolve DID
   const resolvedDid = await resolveDid(agent_did);

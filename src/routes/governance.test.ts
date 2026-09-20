@@ -3,7 +3,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 vi.mock('../services/db.js', () => ({ default: { connect: vi.fn() } }));
 vi.mock('../services/credential.js', () => ({ createJWS: vi.fn(async () => 'jws') }));
 
-const { fetchTrustScore, walletFromDid } = await import('./governance.js');
+const { fetchTrustScore, walletFromDid, validityHours, DEFAULT_VALIDITY_HOURS, MAX_VALIDITY_HOURS } =
+  await import('./governance.js');
 
 function respond(status: number, body: unknown = {}) {
   return vi.fn(async () => ({
@@ -125,5 +126,44 @@ describe('walletFromDid', () => {
   it('nothing in, null out', () => {
     expect(walletFromDid('')).toBeNull();
     expect(walletFromDid(undefined as unknown as string)).toBeNull();
+  });
+});
+
+/**
+ * The default is the opinion: an authorization decision that outlives the
+ * constraints it was made under is a standing permission somebody forgot to
+ * revoke. The cap exists for one real case — a sample handed to a reviewer has
+ * to survive being read, and an hour does not.
+ */
+describe('validityHours', () => {
+  it('defaults to an hour when nothing is asked for', () => {
+    expect(validityHours(undefined)).toBe(DEFAULT_VALIDITY_HOURS);
+    expect(validityHours(null)).toBe(DEFAULT_VALIDITY_HOURS);
+    expect(DEFAULT_VALIDITY_HOURS).toBe(1);
+  });
+
+  it('honours a shorter window', () => {
+    expect(validityHours(0.25)).toBe(0.25);
+  });
+
+  it('caps at seven days instead of refusing the request', () => {
+    /* Rejecting the whole call over an optimistic number helps nobody; the
+       caller gets a decision, just a shorter one than asked for. */
+    expect(validityHours(24 * 365)).toBe(MAX_VALIDITY_HOURS);
+    expect(MAX_VALIDITY_HOURS).toBe(168);
+  });
+
+  it('a window at exactly the cap is granted in full', () => {
+    expect(validityHours(168)).toBe(168);
+  });
+
+  it('nonsense falls back to the default rather than to forever', () => {
+    for (const bad of [0, -5, NaN, Infinity, 'soon', {}, []]) {
+      expect(validityHours(bad as unknown)).toBe(DEFAULT_VALIDITY_HOURS);
+    }
+  });
+
+  it('a numeric string is accepted, since JSON clients differ', () => {
+    expect(validityHours('168')).toBe(168);
   });
 });
