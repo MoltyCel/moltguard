@@ -70,26 +70,50 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     description:
       'Full agent report: risk score, on-chain wallet history, USDC balance and ERC-8004 registry data.',
     routeTemplate: `${GUARD_PREFIX}/api/agent/detail/:address`,
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        wallet: '0x…', score: 72, breakdown: {}, walletData: {},
+        usdcBalance: '0', erc8004: {}, moltrust: {}, _meta: {},
+      },
+    },
   },
   'GET /api/sybil/scan': {
     method: 'GET',
     description: 'Sybil-cluster scan for an EVM address: funding ancestry and co-movement signals.',
     routeTemplate: `${GUARD_PREFIX}/api/sybil/scan/:address`,
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        wallet: '0x…', sybilCluster: false, walletAge: 412,
+        counterparties: 37, fundingSource: null, _meta: {},
+      },
+    },
   },
   'GET /api/market/check': {
     method: 'GET',
     description: 'Integrity check for one Polymarket market: wallet concentration and anomaly flags.',
     routeTemplate: `${GUARD_PREFIX}/api/market/check/:marketId`,
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        marketId: '0x…', integrityScore: 84, spreadPct: 1.2,
+        oracleVerified: true, flags: [], _meta: {},
+      },
+    },
   },
   'GET /prediction/integrity': {
     method: 'GET',
     description:
       'Prediction-market integrity for one market: verified-wallet share, average track record and a herding indicator.',
     routeTemplate: `${GUARD_PREFIX}/prediction/integrity/:market_id`,
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        market_id: '0x…', wallets: 20, verified: 7,
+        avg_prediction_score: 61, herding: false,
+      },
+    },
   },
   'GET /radar/market': {
     method: 'GET',
@@ -113,7 +137,17 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     description: 'Issue a signed MoltGuard trust credential (JWS, EdDSA) for an EVM address.',
     bodyType: 'json',
     body: { address: '0x380238347e58435f40B4da1F1A045A271D5838F5' },
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        '@context': ['https://www.w3.org/2018/credentials/v1'],
+        type: ['VerifiableCredential'],
+        issuer: 'did:web:moltrust.ch',
+        issuanceDate: '2026-09-21T00:00:00.000Z',
+        credentialSubject: { id: 'did:base:0x…' },
+        jws: 'eyJhbGciOiJFZERTQSIs…',
+      },
+    },
   },
   'POST /vc/skill/issue': {
     method: 'POST',
@@ -124,7 +158,17 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
       authorDID: 'did:base:0x…',
       repositoryUrl: 'https://github.com/owner/repo',
     },
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        '@context': ['https://www.w3.org/2018/credentials/v1'],
+        type: ['VerifiableCredential'],
+        issuer: 'did:web:moltrust.ch',
+        issuanceDate: '2026-09-21T00:00:00.000Z',
+        credentialSubject: { id: 'did:base:0x…' },
+        jws: 'eyJhbGciOiJFZERTQSIs…',
+      },
+    },
   },
   'POST /vc/prediction/issue': {
     method: 'POST',
@@ -132,7 +176,17 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
       'Issue a W3C Verifiable Credential over a wallet prediction track record. The wallet must be linked first via POST /prediction/wallet-link.',
     bodyType: 'json',
     body: { address: '0x…', did: 'did:base:0x…' },
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        '@context': ['https://www.w3.org/2018/credentials/v1'],
+        type: ['VerifiableCredential'],
+        issuer: 'did:web:moltrust.ch',
+        issuanceDate: '2026-09-21T00:00:00.000Z',
+        credentialSubject: { id: 'did:base:0x…' },
+        jws: 'eyJhbGciOiJFZERTQSIs…',
+      },
+    },
   },
   'POST /vc/buyer-agent/issue': {
     method: 'POST',
@@ -146,7 +200,17 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
       currency: 'USDC',
       validDays: 7,
     },
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        '@context': ['https://www.w3.org/2018/credentials/v1'],
+        type: ['VerifiableCredential'],
+        issuer: 'did:web:moltrust.ch',
+        issuanceDate: '2026-09-21T00:00:00.000Z',
+        credentialSubject: { id: 'did:base:0x…' },
+        jws: 'eyJhbGciOiJFZERTQSIs…',
+      },
+    },
   },
   'POST /vc/travel-agent/issue': {
     method: 'POST',
@@ -160,7 +224,17 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
       currency: 'USDC',
       validDays: 30,
     },
-    output: { type: 'json' },
+    output: {
+      type: 'json',
+      example: {
+        '@context': ['https://www.w3.org/2018/credentials/v1'],
+        type: ['VerifiableCredential'],
+        issuer: 'did:web:moltrust.ch',
+        issuanceDate: '2026-09-21T00:00:00.000Z',
+        credentialSubject: { id: 'did:base:0x…' },
+        jws: 'eyJhbGciOiJFZERTQSIs…',
+      },
+    },
   },
 };
 
