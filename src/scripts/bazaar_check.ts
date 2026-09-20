@@ -11,7 +11,9 @@
 // Exit 0 we are listed, 1 we are not, 2 the catalogue could not be read. The
 // three are kept apart on purpose: a discovery API that needs a key we do not
 // have, or that a facilitator never implemented, is not the same as an empty
-// answer, and a check that cannot tell them apart teaches nothing.
+// answer, and a check that cannot tell them apart teaches nothing. A scan that
+// could not finish is exit 2 as well — a verdict from a partial catalogue is
+// the same false confidence in a different disguise.
 
 import { CONFIG } from '../config.js';
 import { isCdpEndpoint, mintCdpBearer } from '../services/cdp-auth.js';
@@ -27,68 +29,92 @@ function authHeaders(method: string, url: string): Record<string, string> {
   return {};
 }
 
-async function main(): Promise<number> {
-  const argPayTo = process.argv.indexOf('--payTo');
-  const payTo = argPayTo > -1 ? process.argv[argPayTo + 1] : PAY_TO;
+interface Page { items: any[]; total: number | null }
 
-  const base = CONFIG.facilitatorUrl.replace(/\/$/, '');
-  // Ask for our own listings rather than the whole catalogue: the filter is in
-  // the spec, and a facilitator that ignores it still returns a superset we can
-  // search ourselves.
-  const url = `${base}/discovery/resources?payTo=${encodeURIComponent(payTo)}&limit=100`;
-
+/** One page of the catalogue, or null when it could not be read. */
+async function fetchPage(base: string, offset: number, limit: number): Promise<Page | null | 'unreadable'> {
+  const url = `${base}/discovery/resources?limit=${limit}&offset=${offset}`;
   let res: Response;
   try {
     res = await fetch(url, { headers: { Accept: 'application/json', ...authHeaders('GET', url) } });
   } catch (err: any) {
     console.log(`UNGEPRUEFT — Katalog nicht erreichbar: ${err?.message ?? err}`);
-    return 2;
+    return 'unreadable';
   }
-
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    // 401/403 is the facilitator declining to show us the catalogue, and 404 is
-    // one that never implemented the optional discovery API. Neither says
-    // anything about whether we are in it.
-    if ([401, 403, 404].includes(res.status)) {
-      console.log(`UNGEPRUEFT — Discovery-API antwortet ${res.status}; ` +
-                  'das ist keine Aussage darueber, ob wir gelistet sind.');
-      console.log(body.slice(0, 300));
-      return 2;
-    }
-    console.log(`UNGEPRUEFT — HTTP ${res.status}`);
+    // 401/403 is the facilitator declining to show us the catalogue; 404 is one
+    // that never implemented the optional discovery API. Neither says anything
+    // about whether we are in it.
+    const known = [401, 403, 404].includes(res.status);
+    console.log(`UNGEPRUEFT — Discovery-API antwortet ${res.status}` +
+                (known ? '; das ist keine Aussage darueber, ob wir gelistet sind.' : ''));
     console.log(body.slice(0, 300));
-    return 2;
+    return 'unreadable';
   }
-
   const body: any = await res.json().catch(() => null);
   if (!body || typeof body !== 'object') {
     console.log('UNGEPRUEFT — unerwartete Antwortform');
-    return 2;
+    return 'unreadable';
   }
+  const items: any[] = Array.isArray(body.items) ? body.items
+    : Array.isArray(body.resources) ? body.resources
+    : Array.isArray(body) ? body : [];
+  const total = typeof body?.pagination?.total === 'number' ? body.pagination.total : null;
+  return { items, total };
+}
 
-  const resources: any[] = Array.isArray(body.resources)
-    ? body.resources
-    : Array.isArray(body.items)
-      ? body.items
-      : Array.isArray(body)
-        ? body
-        : [];
+function isOurs(r: any): boolean {
+  const u = String(r?.resource?.url ?? r?.url ?? '');
+  return u.includes('api.moltrust.ch/guard');
+}
 
-  const ours = resources.filter((r) => {
-    const u = String(r?.resource?.url ?? r?.url ?? '');
-    return u.includes('api.moltrust.ch/guard');
-  });
+async function main(): Promise<number> {
+  const argPayTo = process.argv.indexOf('--payTo');
+  const payTo = argPayTo > -1 ? process.argv[argPayTo + 1] : PAY_TO;
+  const base = CONFIG.facilitatorUrl.replace(/\/$/, '');
+
+  // The spec gives /discovery/resources a payTo filter. CDP accepts it and
+  // ignores it: asking for our address returned the same 14,950 entries and the
+  // same first row as asking for nothing. Filtering server-side and reading the
+  // first page would have reported NOT LISTED after looking at 100 of 14,950 —
+  // a false negative stated with full confidence. So the whole catalogue is
+  // walked and the filtering happens here.
+  const LIMIT = 100;
+  const MAX_PAGES = 400;
+
+  const ours: any[] = [];
+  let scanned = 0;
+  let total: number | null = null;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await fetchPage(base, page * LIMIT, LIMIT);
+    if (result === 'unreadable') return 2;
+    if (result === null) return 2;
+    if (total === null) total = result.total;
+    scanned += result.items.length;
+    ours.push(...result.items.filter(isOurs));
+    if (result.items.length < LIMIT) break;
+    if (total !== null && scanned >= total) break;
+    if (page === MAX_PAGES - 1) {
+      // Refusing to answer beats answering from a partial scan.
+      console.log(`UNGEPRUEFT — Katalog groesser als ${MAX_PAGES * LIMIT} Eintraege, ` +
+                  `nach ${scanned} abgebrochen. Kein Urteil.`);
+      return 2;
+    }
+  }
 
   console.log(`Facilitator  : ${base}`);
   console.log(`payTo        : ${payTo}`);
-  console.log(`Eintraege    : ${resources.length} gesamt, ${ours.length} davon unsere`);
+  console.log(`Katalog      : ${scanned} Eintraege durchsucht` +
+              (total !== null ? ` von ${total} gemeldeten` : '') +
+              `, ${ours.length} davon unsere`);
 
   for (const r of ours) {
     const u = r?.resource?.url ?? r?.url;
     const tpl = r?.extensions?.bazaar?.routeTemplate ?? r?.routeTemplate ?? '(statisch)';
     const method = r?.extensions?.bazaar?.info?.input?.method ?? '?';
-    console.log(`  ${method.padEnd(5)} ${tpl}  ${u}`);
+    console.log(`  ${String(method).padEnd(5)} ${tpl}  ${u}`);
   }
 
   if (ours.length === 0) {
