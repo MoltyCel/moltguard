@@ -114,32 +114,43 @@ export function createX402Middleware(): MiddlewareHandler {
       failure = { reason: outcome.reason, detail: outcome.detail };
     }
 
-    // Return 402 with x402 v2 payment details
-    c.header('PAYMENT-REQUIRED', 'true');
+    // The x402 object, built once and sent twice: base64 in the header, and
+    // bare at the top level of the body.
+    //
+    // The header carried the literal string "true". Every automated x402 index
+    // reads it, fails to base64-decode it, and skips every check that follows —
+    // CDP's validator reports 21 of 25 checks skipped for that one reason, and
+    // the bazaar extension we built is never looked at. The catalogue was empty
+    // because of a five-character header, not because of anything in the body.
+    const payload = {
+      x402Version: 2,
+      resource: buildResourceInfo(path),
+      // Same function the settle call uses. Written out separately, the
+      // challenge and the settlement terms drift, and the facilitator then
+      // rejects a payment for an obligation we never advertised.
+      accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, MOLTRUST_WALLET)],
+      // Discovery. The catalogue entry is written at settlement, not here,
+      // but a facilitator only catalogues what the challenge advertised —
+      // omit this and the endpoint stays unfindable however often it is
+      // paid for.
+      ...(() => {
+        const extensions = buildExtensions(method, path);
+        return extensions ? { extensions } : {};
+      })(),
+    };
+
+    c.header('PAYMENT-REQUIRED', Buffer.from(JSON.stringify(payload)).toString('base64'));
     return c.json(
       {
         error: 'Payment Required',
         ...(failure ? { paymentError: failure.reason, paymentErrorDetail: failure.detail } : {}),
-        // PaymentRequired per @x402/core: x402Version as a number, resource
-        // beside accepts rather than inside each entry. The previous shape put
-        // version: '2' as a string and folded resource/description/mimeType
-        // into every offer, which is the v1 layout wearing a v2 label.
-        x402: {
-          x402Version: 2,
-          resource: buildResourceInfo(path),
-          // Same function the settle call uses. Written out separately, the
-          // challenge and the settlement terms drift, and the facilitator then
-          // rejects a payment for an obligation we never advertised.
-          accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, MOLTRUST_WALLET)],
-          // Discovery. The catalogue entry is written at settlement, not here,
-          // but a facilitator only catalogues what the challenge advertised —
-          // omit this and the endpoint stays unfindable however often it is
-          // paid for.
-          ...(() => {
-            const extensions = buildExtensions(method, path);
-            return extensions ? { extensions } : {};
-          })(),
-        },
+        // Bare at the top level, as the spec's own example and every indexed
+        // peer do it.
+        ...payload,
+        // The old nested copy, kept for one release. Our own payment script
+        // reads body.x402, and so may anyone who integrated against it.
+        // Deprecated: read the top level instead.
+        x402: payload,
       },
       402,
     );
