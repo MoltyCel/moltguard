@@ -24,6 +24,31 @@ export const X402_PRICES: Record<string, number> = {
   'POST /vc/travel-agent/issue': 5.00,
 };
 
+/**
+ * Which price entry governs this request, by its key.
+ *
+ * Exact match first, then a prefix match on a path boundary, so
+ * "GET /api/agent/score/0x…" resolves to "GET /api/agent/score" while
+ * "/api/agent/score-free" does not.
+ *
+ * The key is returned rather than the price because two things need the same
+ * answer: what to charge, and which catalogue entry describes the endpoint. Two
+ * copies of this matching drifted into disagreeing once already — a bare
+ * startsWith matched the free routes against their paid prefixes — so there is
+ * one matcher and both callers read it.
+ */
+export function matchPriceKey(method: string, path: string): string | null {
+  const exact = `${method} ${path}`;
+  if (X402_PRICES[exact] !== undefined) return exact;
+
+  for (const pattern of Object.keys(X402_PRICES)) {
+    const [pMethod, pPath] = pattern.split(' ');
+    if (method !== pMethod) continue;
+    if (path === pPath || path.startsWith(pPath + '/')) return pattern;
+  }
+  return null;
+}
+
 // Endpoints that are ALWAYS free (never block) — matched by prefix
 export const X402_FREE_PATHS = [
   '/health',

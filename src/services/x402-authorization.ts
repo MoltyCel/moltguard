@@ -10,6 +10,7 @@
 // whether a payload is worth spending a facilitator call on.
 
 import type { Address } from 'viem';
+import { SERVICE_NAME, SERVICE_TAGS, SERVICE_ICON_URL } from './x402-bazaar.js';
 
 export const USDC_DECIMALS = 6;
 export const USDC_CONTRACT_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -28,7 +29,7 @@ export interface Eip3009Authorization {
 
 export interface ExactEvmPayload {
   x402Version?: number;
-  resource?: { url: string; description: string; mimeType: string };
+  resource?: { url: string; description: string; mimeType: string; [k: string]: unknown };
   /** The offer the payer took, echoed back from the 402 challenge. */
   accepted: {
     scheme: string;
@@ -248,5 +249,14 @@ export function buildResourceInfo(path: string) {
     url: `https://api.moltrust.ch/guard${path}`,
     description: `MolTrust API — ${path}`,
     mimeType: 'application/json',
+    // Service metadata the bazaar extension reads for catalogue display. It is
+    // optional and additive: a facilitator that does not know these fields
+    // ignores them, and one that does gets a name and tags without an
+    // out-of-band admin step. Both stay inside the spec's 32-character
+    // printable-ASCII bound, and the icon is a plain https URL — a facilitator
+    // silently drops anything else.
+    serviceName: SERVICE_NAME,
+    tags: [...SERVICE_TAGS],
+    iconUrl: SERVICE_ICON_URL,
   };
 }
