@@ -1,3 +1,10 @@
+import {
+  VERSION_HEADER_PARAM,
+  isAttestation,
+  payloadMatchesVersion,
+  versionOf,
+  type AttestationEnvelope,
+} from './attestation.js';
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import type { Address } from 'viem';
 import { calculateAgentScore } from './scoring.js';
@@ -29,7 +36,13 @@ function base64url(data: Buffer | string): string {
   return buf.toString('base64url');
 }
 
-export async function createJWS(payload: object): Promise<string> {
+export interface CreateJWSOptions {
+  /** Stamp the payload version into the JWS header. Only the authorization
+   *  attestations use this; every other caller's tokens stay byte-identical. */
+  attestationVersion?: number;
+}
+
+export async function createJWS(payload: object, opts: CreateJWSOptions = {}): Promise<string> {
   const privateKey = await getSigningKey();
   if (!privateKey) {
     // Fallback to placeholder if no key configured
@@ -37,11 +50,16 @@ export async function createJWS(payload: object): Promise<string> {
   }
 
   // JWS header: Ed25519 with key reference
-  const header = {
+  const header: Record<string, unknown> = {
     alg: 'EdDSA',
     typ: 'JWT',
     kid: 'did:web:moltrust.ch#moltguard-key-1',
   };
+  // Added only when asked for. A version parameter on every token in the
+  // system would change six unrelated callers' output for the benefit of one.
+  if (opts.attestationVersion !== undefined) {
+    header[VERSION_HEADER_PARAM] = opts.attestationVersion;
+  }
 
   const headerB64 = base64url(JSON.stringify(header));
   const payloadB64 = base64url(JSON.stringify(payload));
@@ -72,6 +90,44 @@ export function verifyJWS(jws: string): { valid: boolean; payload: any } {
   } catch {
     return { valid: false, payload: null };
   }
+}
+
+/**
+ * Verify an authorization attestation and report which version it is.
+ *
+ * Both versions are accepted. Dropping v1 would break every holder of an
+ * attestation issued before the rename, and those stay signed and valid until
+ * their own expiry says otherwise.
+ */
+export function verifyAttestation(jws: string): AttestationEnvelope {
+  const parts = (jws || '').split('.');
+  if (parts.length !== 3) {
+    return { valid: false, version: null, signalType: null, payload: null, reason: 'not a compact JWS' };
+  }
+
+  const version = versionOf(parts[0]);
+  if (version === null) {
+    // An unknown version is refused rather than read as the newest one:
+    // guessing forward parses a future payload with today's assumptions.
+    return { valid: false, version: null, signalType: null, payload: null, reason: 'unknown attestation version' };
+  }
+
+  const { valid, payload } = verifyJWS(jws);
+  if (!valid) {
+    return { valid: false, version, signalType: null, payload: null, reason: 'signature does not verify' };
+  }
+  if (!isAttestation(payload)) {
+    return { valid: false, version, signalType: payload?.signal_type ?? null, payload, reason: 'not an authorization attestation' };
+  }
+  if (!payloadMatchesVersion(payload, version)) {
+    // The header is what a consumer routes on without reading the payload, so
+    // the two disagreeing means one of them is lying.
+    return {
+      valid: false, version, signalType: payload.signal_type, payload,
+      reason: `header declares v${version} but payload carries ${payload.signal_type}`,
+    };
+  }
+  return { valid: true, version, signalType: payload.signal_type, payload };
 }
 
 export interface VerifiableCredential {
