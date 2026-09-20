@@ -1,8 +1,9 @@
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import { query } from '../services/db.js';
-import { X402_PRICES, X402_FREE_PATHS } from './x402-prices.js';
+import { X402_PRICES, X402_FREE_PATHS, matchPriceKey } from './x402-prices.js';
 import { verifyPayment } from '../services/x402-verify.js';
 import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
+import { buildExtensions } from '../services/x402-bazaar.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -23,25 +24,12 @@ const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
 
 function getPrice(method: string, path: string): number | null {
-  // Exact match first
-  const key = `${method} ${path}`;
-  if (X402_PRICES[key] !== undefined) return X402_PRICES[key];
-
-  // Prefix match on a path boundary (e.g. "GET /api/agent/score" matches
-  // "/api/agent/score/:address").
-  //
-  // A bare startsWith also matched "/api/agent/score-free" against
-  // "/api/agent/score", and "/api/market/check-free" against
-  // "/api/market/check". Both are free endpoints that only stayed free because
-  // isFree() happens to run first — a free route that shares a prefix with a
-  // priced one should not depend on the order of two checks in another
-  // function.
-  for (const [pattern, price] of Object.entries(X402_PRICES)) {
-    const [pMethod, pPath] = pattern.split(' ');
-    if (method !== pMethod) continue;
-    if (path === pPath || path.startsWith(pPath + '/')) return price;
-  }
-  return null;
+  // The matcher lives in x402-prices.ts because the bazaar catalogue needs the
+  // same answer keyed the same way. A bare startsWith once matched
+  // "/api/agent/score-free" against "/api/agent/score" — the boundary check is
+  // in matchPriceKey now, in one place rather than two.
+  const key = matchPriceKey(method, path);
+  return key === null ? null : X402_PRICES[key];
 }
 
 function isFree(path: string): boolean {
@@ -117,7 +105,7 @@ export function createX402Middleware(): MiddlewareHandler {
 
     let failure: { reason: string; detail: string } | null = null;
     if (paymentHeader) {
-      const outcome = await verifyPayment(paymentHeader, price, path, MOLTRUST_WALLET);
+      const outcome = await verifyPayment(paymentHeader, price, path, MOLTRUST_WALLET, method);
       if (outcome.ok) {
         c.set('x402_protocol_version', protocolVersion);
         c.set('x402_tx_hash', outcome.txHash);
@@ -143,6 +131,14 @@ export function createX402Middleware(): MiddlewareHandler {
           // challenge and the settlement terms drift, and the facilitator then
           // rejects a payment for an obligation we never advertised.
           accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, MOLTRUST_WALLET)],
+          // Discovery. The catalogue entry is written at settlement, not here,
+          // but a facilitator only catalogues what the challenge advertised —
+          // omit this and the endpoint stays unfindable however often it is
+          // paid for.
+          ...(() => {
+            const extensions = buildExtensions(method, path);
+            return extensions ? { extensions } : {};
+          })(),
         },
       },
       402,
