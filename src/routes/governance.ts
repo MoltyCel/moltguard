@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import pool from '../services/db.js';
 import { createJWS } from '../services/credential.js';
+import { SIGNAL_TYPE_V2, ATTESTATION_VERSION_CURRENT } from '../services/attestation.js';
 
 const app = new Hono();
 
@@ -207,7 +208,8 @@ app.post('/governance/validate-capabilities', async (c) => {
   const restrictedScopes = requestedScopes.filter(isScopeRestricted);
   if (restrictedScopes.length > 0) {
     const attestation = {
-      signal_type: 'governance_attestation',
+      signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
       iss: 'api.moltrust.ch',
       sub: agent_did,
       resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
@@ -228,7 +230,7 @@ app.post('/governance/validate-capabilities', async (c) => {
       evaluation_timestamp: now.toISOString(),
       expires_at: expiresAt.toISOString(),
     };
-    const jws = await createJWS(attestation);
+    const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
     return c.json({ ...attestation, jws });
   }
 
@@ -239,7 +241,8 @@ app.post('/governance/validate-capabilities', async (c) => {
       const ageMs = now.getTime() - evalTime.getTime();
       if (ageMs > TEMPORAL_STALENESS_MS) {
         const attestation = {
-          signal_type: 'governance_attestation',
+          signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
           iss: 'api.moltrust.ch',
           sub: agent_did,
           resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
@@ -260,7 +263,7 @@ app.post('/governance/validate-capabilities', async (c) => {
           evaluation_timestamp: context.evaluation_timestamp,
           expires_at: expiresAt.toISOString(),
         };
-        const jws = await createJWS(attestation);
+        const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
         return c.json({ ...attestation, jws });
       }
     }
@@ -272,7 +275,8 @@ app.post('/governance/validate-capabilities', async (c) => {
   // of the subject, so those denials run first and stand without a score.
   if (trust.status !== 'ok') {
     const attestation = {
-      signal_type: 'governance_attestation',
+      signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
       iss: 'api.moltrust.ch',
       sub: agent_did,
       resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
@@ -295,7 +299,7 @@ app.post('/governance/validate-capabilities', async (c) => {
       evaluation_timestamp: now.toISOString(),
       expires_at: expiresAt.toISOString(),
     };
-    const jws = await createJWS(attestation);
+    const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
     return c.json({ ...attestation, jws });
   }
 
@@ -320,7 +324,8 @@ app.post('/governance/validate-capabilities', async (c) => {
 
   // 10. Build attestation payload
   const attestation: Record<string, any> = {
-    signal_type: 'governance_attestation',
+    signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
     iss: 'api.moltrust.ch',
     sub: agent_did,
     resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
@@ -346,7 +351,7 @@ app.post('/governance/validate-capabilities', async (c) => {
   }
 
   // 11. Sign with Ed25519
-  const jws = await createJWS(attestation);
+  const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
 
   return c.json({
     ...attestation,
