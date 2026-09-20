@@ -63,10 +63,41 @@ async function resolveDid(did: string): Promise<string> {
     );
     if (agents.length > 0) return agents[0].did;
 
-    return did; // Return original, trust score lookup will handle unknown
+    // A wallet-shaped DID carries an address, and the agents table knows the
+    // addresses. Without this, did:base:0x… and did:pkh:… reached the scoring
+    // endpoint verbatim, which cannot parse them — so an agent we had scored
+    // under its did:moltrust: name came back unscorable when asked for under
+    // the wallet it had bound. Both chains are covered because both occur:
+    // wallet_address holds EVM addresses and Solana base58 alike.
+    const wallet = walletFromDid(did);
+    if (wallet) {
+      const { rows: byWallet } = await client.query(
+        `SELECT did FROM agents WHERE lower(wallet_address) = lower($1) LIMIT 1`,
+        [wallet]
+      );
+      if (byWallet.length > 0) return byWallet[0].did;
+    }
+
+    return did; // still unresolved; fetchTrustScore reports that as `unknown`
   } finally {
     client.release();
   }
+}
+
+/**
+ * The wallet address inside a DID, or null if it does not carry one.
+ *
+ * Deliberately narrow. The last segment of `did:web:example.com` is a
+ * hostname, and looking that up as a wallet would spend a query on every
+ * web DID to learn nothing; requiring the segment to look like an address
+ * keeps the lookup to the cases that can match.
+ */
+export function walletFromDid(did: string): string | null {
+  if (!did || did.startsWith('did:moltrust:')) return null;
+  const last = did.split(':').pop() ?? '';
+  if (/^0x[0-9a-fA-F]{40}$/.test(last)) return last;           // EVM
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(last)) return last;  // Solana base58
+  return null;
 }
 
 /**
