@@ -68,15 +68,46 @@ async function resolveDid(did: string): Promise<string> {
   }
 }
 
-async function fetchTrustScore(did: string): Promise<{ score: number; breakdown: any }> {
+/**
+ * A trust score we actually read, or the reason we did not.
+ *
+ * The three cases below used to collapse into `score: 0`, and a zero sits under
+ * the trust floor, so every DID class the scoring endpoint cannot parse came
+ * back as a signed `deny`. That is the opposite of true: we had not evaluated
+ * the subject at all. `did:web`, `did:base` and ERC-8004 identifiers are
+ * exactly the classes affected, which is to say most agents outside our own
+ * namespace.
+ */
+export type TrustScoreResult =
+  | { status: 'ok'; score: number; breakdown: any }
+  | { status: 'unknown'; reason: string }
+  | { status: 'unreachable'; reason: string };
+
+export async function fetchTrustScore(did: string): Promise<TrustScoreResult> {
+  let resp: Response;
   try {
-    const resp = await fetch(`http://localhost:8000/skill/trust-score/${encodeURIComponent(did)}`);
-    if (resp.ok) {
-      const data: any = await resp.json();
-      return { score: data.trust_score ?? 0, breakdown: data.breakdown ?? {} };
+    resp = await fetch(`http://localhost:8000/skill/trust-score/${encodeURIComponent(did)}`);
+  } catch (e) {
+    // We could not ask. Saying "score 0" here would report a measurement we
+    // never took.
+    return { status: 'unreachable', reason: `scoring endpoint unreachable: ${(e as Error).name}` };
+  }
+
+  if (resp.ok) {
+    const data: any = await resp.json();
+    if (typeof data?.trust_score !== 'number') {
+      return { status: 'unknown', reason: 'scoring endpoint returned no trust_score' };
     }
-  } catch {}
-  return { score: 0, breakdown: {} };
+    return { status: 'ok', score: data.trust_score, breakdown: data.breakdown ?? {} };
+  }
+
+  // 400 means the endpoint does not accept this DID format; 404 means it has
+  // never seen the subject. Neither is a statement about the subject's
+  // trustworthiness.
+  if (resp.status === 400 || resp.status === 404) {
+    return { status: 'unknown', reason: `no score available for this DID (HTTP ${resp.status})` };
+  }
+  return { status: 'unreachable', reason: `scoring endpoint returned HTTP ${resp.status}` };
 }
 
 async function fetchAAE(did: string): Promise<any | null> {
@@ -159,10 +190,14 @@ app.post('/governance/validate-capabilities', async (c) => {
   const resolvedDid = await resolveDid(agent_did);
 
   // 2. Fetch trust score
-  const { score, breakdown } = await fetchTrustScore(resolvedDid);
+  const trust = await fetchTrustScore(resolvedDid);
+
+  // Nullable until the withheld branch below has run. The request-level
+  // denials that come first report the score they have, which may be none.
+  const knownScore: number | null = trust.status === 'ok' ? trust.score : null;
 
   // 3. Map to passport grade
-  const passportGrade = scoreToGrade(score);
+  const passportGrade = knownScore === null ? null : scoreToGrade(knownScore);
 
   // 4. Fetch AAE if present
   const aae = await fetchAAE(resolvedDid);
@@ -188,7 +223,7 @@ app.post('/governance/validate-capabilities', async (c) => {
         trust_floor: 40,
         passport_grade: passportGrade,
       },
-      trust_score: score,
+      trust_score: knownScore,
       delegation_chain_hash: context?.delegation_chain_hash || null,
       evaluation_timestamp: now.toISOString(),
       expires_at: expiresAt.toISOString(),
@@ -220,7 +255,7 @@ app.post('/governance/validate-capabilities', async (c) => {
             trust_floor: 40,
             passport_grade: passportGrade,
           },
-          trust_score: score,
+          trust_score: knownScore,
           delegation_chain_hash: context?.delegation_chain_hash || null,
           evaluation_timestamp: context.evaluation_timestamp,
           expires_at: expiresAt.toISOString(),
@@ -230,6 +265,43 @@ app.post('/governance/validate-capabilities', async (c) => {
       }
     }
   }
+
+  // 6a. No score means no verdict. A withheld attestation is still signed and
+  // still says who asked about whom — it just does not pretend to an answer.
+  // Restricted scope and staleness are properties of the request rather than
+  // of the subject, so those denials run first and stand without a score.
+  if (trust.status !== 'ok') {
+    const attestation = {
+      signal_type: 'governance_attestation',
+      iss: 'api.moltrust.ch',
+      sub: agent_did,
+      resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
+      decision: 'withheld',
+      withheld: true,
+      withheld_reason: trust.reason,
+      withheld_class: trust.status,
+      active_constraints: {
+        scope: [],
+        spend_limit: 0,
+        validity_window: {
+          not_before: now.toISOString(),
+          not_after: expiresAt.toISOString(),
+        },
+        trust_floor: 40,
+        passport_grade: null,
+      },
+      trust_score: null,
+      delegation_chain_hash: context?.delegation_chain_hash || null,
+      evaluation_timestamp: now.toISOString(),
+      expires_at: expiresAt.toISOString(),
+    };
+    const jws = await createJWS(attestation);
+    return c.json({ ...attestation, jws });
+  }
+
+
+  // Past the withheld branch the union is narrowed to 'ok'.
+  const { score, breakdown } = trust;
 
   // 7. Evaluate capabilities (existing AAE / trust-based logic)
   const { scope: permittedScopes, decision: baseDecision } = evaluateCapabilities(capabilities, aae, score);
