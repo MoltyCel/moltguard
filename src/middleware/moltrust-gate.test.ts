@@ -16,17 +16,16 @@
 
 import { describe, expect, it } from 'vitest';
 import crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 
 import {
   bindingString, gateFor, loadJwks, verifyAttestation,
   type Jwks,
 } from './moltrust-gate.js';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const fixture = JSON.parse(readFileSync(join(here, 'moltrust-gate.vectors.json'), 'utf8'));
+// Imported rather than read off disk. The build compiles this file into dist/
+// and the suite runs there too; a readFileSync next to the compiled copy looks
+// for a JSON that tsc never emitted. As an import, resolveJsonModule carries
+// the vectors along with the code that replays them.
+import fixture from './moltrust-gate.vectors.json' with { type: 'json' };
 
 describe('parity with @moltrust/x402', () => {
   it('replays every reference vector', () => {
