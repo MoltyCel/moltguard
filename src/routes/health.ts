@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG } from '../config.js';
+import { gateStats } from '../middleware/x402.js';
 import type { ApiInfo } from '../types/index.js';
 
 const app = new Hono();
@@ -20,6 +21,28 @@ app.get('/', (c) => c.html(landingHtml));
 
 app.get('/health', (c) =>
   c.json({ status: 'ok', timestamp: new Date().toISOString() }),
+);
+
+/**
+ * How the MolTrust discount is doing, since this process started.
+ *
+ * The share is the question the discount was built to answer: is proving an
+ * identity worth anything to the agents actually paying us. The denial mix is
+ * the other half — mostly `attestation_missing` means agents have not heard of
+ * it, mostly `score_withheld` means they have and are too new to qualify.
+ *
+ * In-process counters, so they reset on restart. Deliberate: this measures a
+ * trend, and a number that has to survive a deploy belongs in the database
+ * once there is something worth keeping.
+ */
+app.get('/moltrust/gate-stats', (c) =>
+  c.json({
+    priced_requests: gateStats.priced,
+    discounted_requests: gateStats.discounted,
+    discounted_share: gateStats.share,
+    denied_by_reason: gateStats.denied,
+    since_process_start: true,
+  }),
 );
 
 const X402_ENABLED = process.env.X402_ENABLED === 'true';

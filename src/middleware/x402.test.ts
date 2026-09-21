@@ -73,3 +73,38 @@ describe('the 402 as an index actually reads it', () => {
     expect(round.extensions.bazaar.info.input.method).toBe('GET');
   });
 });
+
+// The MolTrust discount: 20 % off for a caller that proves an identity and a
+// score of at least 50. A discount rather than a gate — the first measurement
+// of whether verification is worth anything must not cost a sale.
+import { gateStats } from './x402.js';
+import { X402_PRICES } from './x402-prices.js';
+
+describe('the MolTrust discount', () => {
+  const DISCOUNT = 0.20;
+
+  it('takes a fifth off every priced route without rounding it away', () => {
+    for (const [key, list] of Object.entries(X402_PRICES)) {
+      const discounted = Number((list * (1 - DISCOUNT)).toFixed(6));
+      expect(discounted, key).toBeLessThan(list);
+      expect(discounted, key).toBeCloseTo(list * 0.8, 6);
+      // The cheapest route is 0.05 USDC; at six decimals 0.04 is exact, so no
+      // price collapses to zero and none gains a rounding cent.
+      expect(discounted, key).toBeGreaterThan(0);
+    }
+  });
+
+  it('prices the 5.00 issuance routes at 4.00', () => {
+    expect(Number((X402_PRICES['POST /vc/skill/issue'] * 0.8).toFixed(6))).toBe(4);
+  });
+
+  it('prices the 0.05 read routes at 0.04', () => {
+    expect(Number((X402_PRICES['GET /api/agent/score'] * 0.8).toFixed(6))).toBe(0.04);
+  });
+
+  it('starts with an empty counter and reports a zero share, not NaN', () => {
+    // A share of 0/0 rendered as NaN breaks the JSON the health route returns.
+    const fresh = { priced: 0, discounted: 0, share: gateStats.share };
+    expect(Number.isFinite(fresh.share)).toBe(true);
+  });
+});

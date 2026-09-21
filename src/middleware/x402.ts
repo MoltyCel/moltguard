@@ -4,6 +4,7 @@ import { X402_PRICES, X402_FREE_PATHS, matchPriceKey } from './x402-prices.js';
 import { verifyPayment } from '../services/x402-verify.js';
 import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
 import { buildExtensions } from '../services/x402-bazaar.js';
+import { gateFor, type Decision } from './moltrust-gate.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -22,6 +23,52 @@ const MOLTRUST_WALLET = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4d
 const BASE_CHAIN_ID = 8453;
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
+
+// --- MolTrust discount ----------------------------------------------------
+//
+// A caller that proves a MolTrust identity and a score of at least 50 pays 20 %
+// less. A discount rather than a gate, deliberately: the first measurement of
+// whether verification is worth anything must not cost a single sale. Nobody is
+// turned away, the price moves.
+//
+// allowWithheld is false. An agent we have never evaluated gets the full price,
+// not the discount — a withheld score is not a low score, and it is not a
+// reason to charge less either.
+const GATE_MIN_SCORE = Number(process.env.MOLTRUST_GATE_MIN_SCORE ?? 50);
+const GATE_DISCOUNT = Number(process.env.MOLTRUST_GATE_DISCOUNT ?? 0.20);
+const GATE_JWKS_PATH = process.env.MOLTRUST_JWKS_PATH ?? '/etc/moltrust/jwks.json';
+
+/** Share of priced requests that earned the discount. Read by /health. */
+export const gateStats = {
+  priced: 0,
+  discounted: 0,
+  denied: {} as Record<string, number>,
+  get share(): number {
+    return this.priced === 0 ? 0 : Number((this.discounted / this.priced).toFixed(4));
+  },
+};
+
+/**
+ * Built once, at startup, so a missing or malformed key set is a boot failure
+ * rather than a surprise at request time. If it cannot be built the discount is
+ * simply never granted — everyone pays full price, which is the behaviour
+ * before this existed.
+ */
+function buildDiscountGate(): ((m: string, p: string, h: Record<string, string | undefined>) => Decision) | null {
+  try {
+    const decide = gateFor({
+      minScore: GATE_MIN_SCORE,
+      allowWithheld: false,
+      jwks: GATE_JWKS_PATH,
+    });
+    console.log(`[x402] MolTrust discount active: ${Math.round(GATE_DISCOUNT * 100)} % at score >= ${GATE_MIN_SCORE}`);
+    return decide;
+  } catch (err) {
+    console.warn(`[x402] MolTrust discount inactive — ${(err as Error).message}. `
+      + 'Full price for everyone; drop a JWKS at MOLTRUST_JWKS_PATH to enable it.');
+    return null;
+  }
+}
 
 function getPrice(method: string, path: string): number | null {
   // The matcher lives in x402-prices.ts because the bazaar catalogue needs the
@@ -75,6 +122,7 @@ export function createX402Middleware(): MiddlewareHandler {
   }
 
   console.log('[x402] ENABLED (v2) — paid endpoints will return 402 without valid payment');
+  const discountGate = buildDiscountGate();
 
   return async (c: Context, next: Next) => {
     const url = new URL(c.req.url);
@@ -85,8 +133,30 @@ export function createX402Middleware(): MiddlewareHandler {
     if (isFree(path)) return next();
 
     // Determine price for this endpoint
-    const price = getPrice(method, path);
-    if (price === null) return next(); // no price defined = free
+    const listPrice = getPrice(method, path);
+    if (listPrice === null) return next(); // no price defined = free
+
+    // The MolTrust discount. Evaluated before anything is quoted, so the 402
+    // challenge advertises the price this caller will actually be charged —
+    // quoting one number and settling another is how a facilitator ends up
+    // rejecting a payment for an obligation we never advertised.
+    let price = listPrice;
+    let gate: Decision | null = null;
+    if (discountGate) {
+      gateStats.priced += 1;
+      gate = discountGate(method, path, c.req.header());
+      if (gate.allowed) {
+        price = Number((listPrice * (1 - GATE_DISCOUNT)).toFixed(6));
+        gateStats.discounted += 1;
+        c.set('moltrust_did', gate.did);
+        c.set('moltrust_discount', GATE_DISCOUNT);
+      } else {
+        // Counted by reason, because the mix is the finding: mostly
+        // attestation_missing means agents have not heard of this; mostly
+        // score_withheld means they have, and are too new to qualify.
+        gateStats.denied[gate.reason] = (gateStats.denied[gate.reason] ?? 0) + 1;
+      }
+    }
 
     // Hackathon keys waive the price on the read endpoints they were meant for.
     // They never waive credential issuance: /hackathon/register hands a 72-hour
