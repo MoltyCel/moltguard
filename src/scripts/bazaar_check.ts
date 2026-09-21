@@ -64,9 +64,28 @@ async function fetchPage(base: string, offset: number, limit: number): Promise<P
   return { items, total };
 }
 
-function isOurs(r: any): boolean {
-  const u = String(r?.resource?.url ?? r?.url ?? '');
-  return u.includes('api.moltrust.ch/guard');
+/** Our host, wherever this catalogue happens to keep the URL. */
+export const OUR_HOST = 'api.moltrust.ch';
+
+/**
+ * Is this catalogue row one of ours?
+ *
+ * `resource` is a plain string in CDP's listing — not `{ url }`, which is the
+ * shape it has in a 402 challenge. The first version of this reached for
+ * `r.resource.url`, got undefined on every row, and would have reported "not
+ * listed" even if we had been listed. Second time this check has answered from
+ * a field that was not there; hence the test below, and hence the accessor
+ * tries every shape rather than assuming one.
+ */
+export function resourceUrl(r: any): string {
+  if (typeof r?.resource === 'string') return r.resource;
+  if (typeof r?.resource?.url === 'string') return r.resource.url;
+  if (typeof r?.url === 'string') return r.url;
+  return '';
+}
+
+export function isOurs(r: any): boolean {
+  return resourceUrl(r).includes(OUR_HOST);
 }
 
 async function main(): Promise<number> {
@@ -85,6 +104,7 @@ async function main(): Promise<number> {
 
   const ours: any[] = [];
   let scanned = 0;
+  let readable = 0;
   let total: number | null = null;
 
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -93,6 +113,7 @@ async function main(): Promise<number> {
     if (result === null) return 2;
     if (total === null) total = result.total;
     scanned += result.items.length;
+    readable += result.items.filter((i: any) => resourceUrl(i) !== '').length;
     ours.push(...result.items.filter(isOurs));
     if (result.items.length < LIMIT) break;
     if (total !== null && scanned >= total) break;
@@ -110,8 +131,16 @@ async function main(): Promise<number> {
               (total !== null ? ` von ${total} gemeldeten` : '') +
               `, ${ours.length} davon unsere`);
 
+  // A scan that could not read a single URL is not a scan that found nothing.
+  // Without this, a field rename upstream turns into a confident "not listed".
+  if (scanned > 0 && readable === 0) {
+    console.log('UNGEPRUEFT — kein einziger Eintrag trug eine lesbare URL. ' +
+                'Das Katalogformat hat sich geaendert; kein Urteil.');
+    return 2;
+  }
+
   for (const r of ours) {
-    const u = r?.resource?.url ?? r?.url;
+    const u = resourceUrl(r);
     const tpl = r?.extensions?.bazaar?.routeTemplate ?? r?.routeTemplate ?? '(statisch)';
     const method = r?.extensions?.bazaar?.info?.input?.method ?? '?';
     console.log(`  ${String(method).padEnd(5)} ${tpl}  ${u}`);
