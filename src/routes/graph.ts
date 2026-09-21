@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import pool from '../services/db.js';
+import { didFormErrorBody, isDidForm } from '../services/did.js';
 
 const app = new Hono();
 
@@ -16,6 +17,14 @@ app.get('/api/graph/score/:fromDid/:toDid', async (c) => {
   const fromDid = c.req.param('fromDid');
   const toDid = c.req.param('toDid');
   const context = c.req.query('context') || null;
+
+  // A malformed identifier used to come back 200 with score: null — the same
+  // answer a real DID with no edges gets, so a caller could not tell a typo
+  // from an honest zero, and the value was echoed into the response
+  // unexamined. The form is checked here; the method is not, because
+  // did:web, did:key and did:base reach this route on purpose.
+  if (!isDidForm(fromDid)) return c.json(didFormErrorBody('fromDid', fromDid), 400);
+  if (!isDidForm(toDid)) return c.json(didFormErrorBody('toDid', toDid), 400);
 
   const client = await pool.connect();
   try {
