@@ -40,6 +40,7 @@ app.get('/moltrust/gate-stats', (c) =>
     priced_requests: gateStats.priced,
     discounted_requests: gateStats.discounted,
     discounted_share: gateStats.share,
+    discounted_by_path: gateStats.discountedVia,
     denied_by_reason: gateStats.denied,
     since_process_start: true,
   }),

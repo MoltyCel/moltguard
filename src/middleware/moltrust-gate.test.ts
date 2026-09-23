@@ -29,7 +29,7 @@ import fixture from './moltrust-gate.vectors.json' with { type: 'json' };
 
 describe('parity with @moltrust/x402', () => {
   it('replays every reference vector', () => {
-    expect(fixture.vectors.length).toBeGreaterThanOrEqual(15);
+    expect(fixture.vectors.length).toBeGreaterThanOrEqual(22);
     for (const v of fixture.vectors) {
       const decide = gateFor({ jwks: fixture.jwks, ...v.options });
       const got = decide(v.method, v.path, v.headers, fixture.now_ms);
@@ -43,7 +43,7 @@ describe('parity with @moltrust/x402', () => {
       v.expected.reason));
     for (const required of ['ok', 'score_below_minimum', 'score_withheld',
       'attestation_invalid', 'proof_invalid', 'credential_missing',
-      'attestation_missing']) {
+      'attestation_missing', 'track_record_invalid']) {
       expect(reasons.has(required), `no vector produces ${required}`).toBe(true);
     }
   });

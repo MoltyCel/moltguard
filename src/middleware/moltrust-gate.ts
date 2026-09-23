@@ -15,6 +15,13 @@
  * signature made with its own key. Both are checked against a JWKS this
  * process already holds. **No network call in the request path** — an outage
  * at MolTrust must not become latency in MoltGuard.
+ *
+ * `allowTrackRecord` is the one way past a withheld score, and it is off until
+ * a host turns it on. An agent that has bound a wallet and holds an anchored
+ * TrackRecordCredential carries a `track_record` object in its attestation;
+ * with the option on, that object stands in for the score. It exists because
+ * every newly registered agent has a withheld score and no way to earn one —
+ * Phase 2 needs three endorsers, and an agent nobody has met yet has none.
  */
 
 import crypto from 'node:crypto';
@@ -38,6 +45,13 @@ export interface Jwk {
 
 export interface Jwks { keys: Jwk[] }
 
+export interface TrackRecord {
+  /** When the TrackRecordCredential was issued, RFC 3339. */
+  issued_at: string;
+  /** Base transaction that anchors it, 0x + 64 hex. */
+  anchor_tx: string;
+}
+
 export interface GateAttestation {
   did: string;
   publicKey: string;
@@ -47,13 +61,16 @@ export interface GateAttestation {
   computedAt: string;
   validUntil: string;
   policyVersion: string;
+  /** Present when the DID holds an anchored TrackRecordCredential. */
+  trackRecord: TrackRecord | null;
   version: number;
 }
 
 export type DenialReason =
   | 'attestation_missing' | 'proof_missing' | 'attestation_invalid'
   | 'proof_invalid' | 'proof_replayed' | 'score_withheld'
-  | 'score_missing' | 'score_below_minimum' | 'credential_missing';
+  | 'score_missing' | 'score_below_minimum' | 'track_record_invalid'
+  | 'credential_missing';
 
 export interface Decision {
   allowed: boolean;
@@ -62,6 +79,9 @@ export interface Decision {
   did?: string;
   trustScore?: number | null;
   credentialTypes?: string[];
+  /** On an allow: which requirement carried it. Absent on a denial. */
+  via?: 'score' | 'track_record';
+  trackRecord?: TrackRecord | null;
 }
 
 export interface GateOptions {
@@ -71,6 +91,12 @@ export interface GateOptions {
   jwks: Jwks | string;
   maxAgeSeconds?: number;
   allowWithheld?: boolean;
+  /**
+   * Accept an anchored TrackRecordCredential in place of a score. Off by
+   * default: flipping it would weaken every gate already deployed without its
+   * operator asking.
+   */
+  allowTrackRecord?: boolean;
   seen?: (proof: string) => boolean;
 }
 
@@ -184,8 +210,37 @@ export function verifyAttestation(token: string, jwks: Jwks, now?: number): Gate
     computedAt: payload.computed_at || '',
     validUntil: payload.valid_until,
     policyVersion: payload.policy_version || '',
+    trackRecord: payload.track_record === undefined ? null : payload.track_record,
     version: payload.v,
   };
+}
+
+const ANCHOR_TX_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Check the `track_record` object's shape. Returns a reason on a problem, null
+ * when it is usable.
+ *
+ * The signature over the attestation already covers these bytes, so a caller
+ * cannot forge them without the registry key. What is checked here is that the
+ * issuer put something a relying party can act on: a moment, and a transaction
+ * to look up. Confirming the anchor on chain is a network call, and this module
+ * makes none.
+ */
+export function checkTrackRecord(tr: unknown): string | null {
+  if (tr === null || typeof tr !== 'object' || Array.isArray(tr)) {
+    return 'track_record is not an object';
+  }
+  const rec = tr as Record<string, unknown>;
+  if (!rec.issued_at) return 'track_record has no issued_at';
+  if (Number.isNaN(Date.parse(String(rec.issued_at)))) {
+    return `track_record.issued_at is not an RFC 3339 timestamp: ${rec.issued_at}`;
+  }
+  if (!rec.anchor_tx) return 'track_record has no anchor_tx';
+  if (!ANCHOR_TX_PATTERN.test(String(rec.anchor_tx))) {
+    return 'track_record.anchor_tx is not a 32-byte hex transaction hash';
+  }
+  return null;
 }
 
 /**
@@ -264,6 +319,7 @@ export function gateFor(options: GateOptions): (
     jwks: rawJwks,
     maxAgeSeconds = DEFAULT_MAX_AGE_SECONDS,
     allowWithheld = false,
+    allowTrackRecord = false,
     seen,
   } = options;
 
@@ -300,15 +356,33 @@ export function gateFor(options: GateOptions): (
       return deny('proof_replayed', 'this proof has been presented before', { did: att.did });
     }
 
+    // Whether the score requirement was met by a score or by a track record.
+    // Kept so the caller can count the two paths apart: a gate that cannot say
+    // which door its callers came through cannot tell what the track record is
+    // worth.
+    let via: 'score' | 'track_record' = 'score';
+
     // A score we have not computed is not a low score, and it is not a pass.
+    // An anchored track record is the one thing that stands in for it.
     if (att.withheld && !allowWithheld) {
-      return deny('score_withheld',
-        'no score has been computed for this agent; that is not a low score, '
-        + 'and this gate does not read it as one',
-        { did: att.did, credentialTypes: att.credentialTypes });
+      if (!allowTrackRecord || att.trackRecord === null) {
+        return deny('score_withheld',
+          'no score has been computed for this agent; that is not a low score, '
+          + 'and this gate does not read it as one',
+          { did: att.did, credentialTypes: att.credentialTypes });
+      }
+      const trProblem = checkTrackRecord(att.trackRecord);
+      if (trProblem) {
+        return deny('track_record_invalid', trProblem,
+          { did: att.did, credentialTypes: att.credentialTypes });
+      }
+      via = 'track_record';
     }
 
-    if (minScore !== null && minScore !== undefined) {
+    // A track record stands in for the score, so there is nothing to compare
+    // against minScore. Comparing anyway would deny every agent it just let
+    // through, on a field the substitute exists because it is empty.
+    if (via === 'score' && minScore !== null && minScore !== undefined) {
       if (att.trustScore === null) {
         return deny('score_missing', 'the attestation carries no score to compare',
           { did: att.did, credentialTypes: att.credentialTypes });
@@ -333,6 +407,8 @@ export function gateFor(options: GateOptions): (
       did: att.did,
       trustScore: att.trustScore,
       credentialTypes: att.credentialTypes,
+      via,
+      trackRecord: att.trackRecord,
     };
   };
 }
