@@ -31,17 +31,34 @@ const X402_ENABLED = process.env.X402_ENABLED === 'true';
 // whether verification is worth anything must not cost a single sale. Nobody is
 // turned away, the price moves.
 //
-// allowWithheld is false. An agent we have never evaluated gets the full price,
-// not the discount — a withheld score is not a low score, and it is not a
-// reason to charge less either.
+// allowWithheld stays false. An agent we have never evaluated gets the full
+// price — a withheld score is not a low score, and it is not a reason to charge
+// less either.
+//
+// allowTrackRecord is true, and it is the way in for an agent that has just
+// arrived. Phase 2 withholds a score under three endorsers, and no agent in the
+// registry has three, so for the first eleven months of this gate the discount
+// was unreachable by anyone who was not already us: 643 priced requests, zero
+// discounts. An anchored TrackRecordCredential over a bound Base wallet stands
+// in for the score. It costs the agent a wallet with its own history, which is
+// what a throwaway identity does not have.
 const GATE_MIN_SCORE = Number(process.env.MOLTRUST_GATE_MIN_SCORE ?? 50);
 const GATE_DISCOUNT = Number(process.env.MOLTRUST_GATE_DISCOUNT ?? 0.20);
 const GATE_JWKS_PATH = process.env.MOLTRUST_JWKS_PATH ?? '/etc/moltrust/jwks.json';
+// On unless explicitly switched off, because here the whole point is to reach
+// agents that cannot have a score yet. The library default is the other way
+// round; a host that has not thought about it should not be opted in.
+const GATE_ALLOW_TRACK_RECORD = process.env.MOLTRUST_GATE_ALLOW_TRACK_RECORD !== 'false';
 
 /** Share of priced requests that earned the discount. Read by /health. */
 export const gateStats = {
   priced: 0,
   discounted: 0,
+  // Split by which requirement carried the allow. Without it the first track
+  // record and the first real score look identical in the counter, and the
+  // question the discount was built to answer — is a track record worth a
+  // discount — has no number behind it.
+  discountedVia: { score: 0, track_record: 0 } as Record<string, number>,
   denied: {} as Record<string, number>,
   get share(): number {
     return this.priced === 0 ? 0 : Number((this.discounted / this.priced).toFixed(4));
@@ -59,9 +76,11 @@ function buildDiscountGate(): ((m: string, p: string, h: Record<string, string |
     const decide = gateFor({
       minScore: GATE_MIN_SCORE,
       allowWithheld: false,
+      allowTrackRecord: GATE_ALLOW_TRACK_RECORD,
       jwks: GATE_JWKS_PATH,
     });
-    console.log(`[x402] MolTrust discount active: ${Math.round(GATE_DISCOUNT * 100)} % at score >= ${GATE_MIN_SCORE}`);
+    console.log(`[x402] MolTrust discount active: ${Math.round(GATE_DISCOUNT * 100)} % at score >= ${GATE_MIN_SCORE}`
+      + `${GATE_ALLOW_TRACK_RECORD ? ', or with an anchored track record' : ''}`);
     return decide;
   } catch (err) {
     console.warn(`[x402] MolTrust discount inactive — ${(err as Error).message}. `
@@ -148,6 +167,8 @@ export function createX402Middleware(): MiddlewareHandler {
       if (gate.allowed) {
         price = Number((listPrice * (1 - GATE_DISCOUNT)).toFixed(6));
         gateStats.discounted += 1;
+        const door = gate.via ?? 'score';
+        gateStats.discountedVia[door] = (gateStats.discountedVia[door] ?? 0) + 1;
         c.set('moltrust_did', gate.did);
         c.set('moltrust_discount', GATE_DISCOUNT);
       } else {
