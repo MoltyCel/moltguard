@@ -5,6 +5,7 @@ import { verifyPayment } from '../services/x402-verify.js';
 import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
 import { buildExtensions } from '../services/x402-bazaar.js';
 import { gateFor, type Decision } from './moltrust-gate.js';
+import { recordGateDecision } from '../services/gateLog.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -177,6 +178,16 @@ export function createX402Middleware(): MiddlewareHandler {
         // score_withheld means they have, and are too new to qualify.
         gateStats.denied[gate.reason] = (gateStats.denied[gate.reason] ?? 0) + 1;
       }
+      // Written after the decision and never awaited: the price the caller is
+      // about to be quoted is already settled, and a slow database must not
+      // reach a request path built to make no network call at all.
+      recordGateDecision({
+        did: gate.did ?? null,
+        path,
+        amount: Math.round(price * 1_000_000),
+        reason: gate.reason,
+        via: gate.allowed ? (gate.via ?? 'score') : null,
+      });
     }
 
     // Hackathon keys waive the price on the read endpoints they were meant for.
