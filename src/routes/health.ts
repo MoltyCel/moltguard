@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG } from '../config.js';
+import { gateLogStats } from '../services/gateLog.js';
 import { gateStats } from '../middleware/x402.js';
 import type { ApiInfo } from '../types/index.js';
 
@@ -43,6 +44,10 @@ app.get('/moltrust/gate-stats', (c) =>
     discounted_by_path: gateStats.discountedVia,
     denied_by_reason: gateStats.denied,
     since_process_start: true,
+    // The per-decision log is the durable half. A zero here next to a non-zero
+    // priced_requests means the log is broken, which is worth seeing.
+    decisions_logged: gateLogStats.written,
+    decisions_dropped: gateLogStats.droppedSinceStart,
   }),
 );
 
