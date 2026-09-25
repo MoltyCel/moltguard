@@ -23,7 +23,9 @@ async function callAnthropic(
   maxTokens = 1000,
 ): Promise<string> {
   const body: Record<string, unknown> = {
-    model: 'claude-sonnet-4-20250514',
+    // claude-sonnet-4-20250514 retired on 2026-06-15 and now returns
+    // HTTP 404 not_found_error on every call.
+    model: 'claude-sonnet-4-6',
     max_tokens: maxTokens,
     messages: [{ role: 'user', content: userContent }],
   };
