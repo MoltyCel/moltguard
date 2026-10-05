@@ -226,7 +226,7 @@ export function createX402Middleware(): MiddlewareHandler {
     // because of a five-character header, not because of anything in the body.
     const payload = {
       x402Version: 2,
-      resource: buildResourceInfo(path),
+      resource: buildResourceInfo(method, path),
       // Same function the settle call uses. Written out separately, the
       // challenge and the settlement terms drift, and the facilitator then
       // rejects a payment for an obligation we never advertised.

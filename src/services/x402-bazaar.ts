@@ -26,11 +26,25 @@ export const SERVICE_NAME = 'MoltGuard';
 export const SERVICE_TAGS = ['agent-trust', 'risk-scoring', 'credentials', 'erc-8004'] as const;
 export const SERVICE_ICON_URL = 'https://moltrust.ch/favicon-32x32.png';
 
+/**
+ * What a priced endpoint says about itself when the table has no sentence for
+ * it. The description a facilitator shows must not be built from the request,
+ * because the request carries the caller's address and the catalogue is public.
+ */
+export const SERVICE_DESCRIPTION =
+  'Pre-transaction identity and authorization checks for AI agents, paid per call in USDC on Base.';
+
 type QueryEndpoint = {
   method: 'GET';
   description: string;
   /** `:param` form, including the mount prefix. Absent for a static path. */
   routeTemplate?: string;
+  /**
+   * What the catalogue shows for the path parameters. A fixed example, never
+   * the values of the request that happened to settle: those are the caller's
+   * own address, and the catalogue is public.
+   */
+  pathParamExample?: Record<string, string>;
   output?: { type: string; example?: unknown };
 };
 
@@ -42,7 +56,7 @@ type BodyEndpoint = {
   output?: { type: string; example?: unknown };
 };
 
-type BazaarEndpoint = QueryEndpoint | BodyEndpoint;
+export type BazaarEndpoint = QueryEndpoint | BodyEndpoint;
 
 /**
  * One entry per priced endpoint, keyed exactly like X402_PRICES.
@@ -60,6 +74,7 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     method: 'GET',
     description: 'Wallet risk score 0-100 with component breakdown for an EVM address.',
     routeTemplate: `${GUARD_PREFIX}/api/agent/score/:address`,
+    pathParamExample: { address: '0x…' },
     output: {
       type: 'json',
       example: { wallet: '0x…', score: 72, breakdown: {}, _meta: {} },
@@ -70,6 +85,7 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     description:
       'Full agent report: risk score, on-chain wallet history, USDC balance and ERC-8004 registry data.',
     routeTemplate: `${GUARD_PREFIX}/api/agent/detail/:address`,
+    pathParamExample: { address: '0x…' },
     output: {
       type: 'json',
       example: {
@@ -82,6 +98,7 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     method: 'GET',
     description: 'Sybil-cluster scan for an EVM address: funding ancestry and co-movement signals.',
     routeTemplate: `${GUARD_PREFIX}/api/sybil/scan/:address`,
+    pathParamExample: { address: '0x…' },
     output: {
       type: 'json',
       example: {
@@ -94,6 +111,7 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     method: 'GET',
     description: 'Integrity check for one Polymarket market: wallet concentration and anomaly flags.',
     routeTemplate: `${GUARD_PREFIX}/api/market/check/:marketId`,
+    pathParamExample: { marketId: '0x…' },
     output: {
       type: 'json',
       example: {
@@ -107,6 +125,7 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     description:
       'Prediction-market integrity for one market: verified-wallet share, average track record and a herding indicator.',
     routeTemplate: `${GUARD_PREFIX}/prediction/integrity/:market_id`,
+    pathParamExample: { market_id: '0x…' },
     output: {
       type: 'json',
       example: {
@@ -120,6 +139,7 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     description:
       'MoltRadar operator view of one market: identified wallets, distinct operators and concentration.',
     routeTemplate: `${GUARD_PREFIX}/radar/market/:id`,
+    pathParamExample: { id: '0x…' },
     output: {
       type: 'json',
       example: {
@@ -136,7 +156,7 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     method: 'POST',
     description: 'Issue a signed MoltGuard trust credential (JWS, EdDSA) for an EVM address.',
     bodyType: 'json',
-    body: { address: '0x380238347e58435f40B4da1F1A045A271D5838F5' },
+    body: { address: '0x…' },
     output: {
       type: 'json',
       example: {
@@ -358,13 +378,25 @@ export interface BazaarExtension {
  * Null is not a failure the caller has to handle loudly: a free endpoint never
  * reaches a 402 and never settles, so there is nothing to catalogue.
  */
+export function bazaarEntryFor(method: string, path: string): BazaarEndpoint | undefined {
+  const key = matchPriceKey(method, path);
+  return key ? BAZAAR_ENDPOINTS[key] : undefined;
+}
+
+/**
+ * A path with every 20-byte hex address replaced by a placeholder, for the one
+ * case the table cannot answer: a priced path with no catalogue entry. Narrow
+ * on purpose — it masks an address, it does not pretty-print a URL.
+ */
+export function maskAddresses(path: string): string {
+  return path.replace(/0x[0-9a-fA-F]{40}/g, '0x…');
+}
+
 export function buildBazaarExtension(
   method: string,
   path: string,
 ): BazaarExtension | null {
-  const key = matchPriceKey(method, path);
-  if (!key) return null;
-  const entry = BAZAAR_ENDPOINTS[key];
+  const entry = bazaarEntryFor(method, path);
   if (!entry) return null;
 
   const input: Record<string, unknown> = { type: 'http', method: entry.method };
@@ -373,8 +405,15 @@ export function buildBazaarExtension(
   if (entry.method === 'GET') {
     if (entry.routeTemplate && isValidRouteTemplate(entry.routeTemplate)) {
       routeTemplate = entry.routeTemplate;
-      const params = extractPathParams(entry.routeTemplate, path);
-      if (params) input.pathParams = params;
+      // The request path is still matched against the template, because a
+      // mismatch means the two tables have drifted and the field is then
+      // omitted rather than guessed. The extracted values are discarded: what
+      // goes into the catalogue is the fixed example, never the address of
+      // whoever happened to pay first. Until 2026-10-05 it was that address,
+      // and ours sat in the public entry for twelve days.
+      if (extractPathParams(entry.routeTemplate, path) && entry.pathParamExample) {
+        input.pathParams = { ...entry.pathParamExample };
+      }
     }
   } else {
     input.bodyType = entry.bodyType;
