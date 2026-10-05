@@ -284,7 +284,9 @@ export async function issueTravelAgentVC(params: {
     exp: Math.floor(expiry.getTime() / 1000),
     vc: credentialSubject,
     type: 'TravelAgentCredential',
-  });
+  }, { route: 'POST /vc/travel-agent/issue', subjectDid: params.agentDID,
+       scopes: ['TravelAgentCredential'], validFrom: now, validUntil: expiry,
+       callerIp: null });
 
   return {
     '@context': [

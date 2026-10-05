@@ -301,7 +301,9 @@ export async function issueBuyerAgentVC(params: {
     exp: Math.floor(expiry.getTime() / 1000),
     vc: credentialSubject,
     type: 'BuyerAgentCredential',
-  });
+  }, { route: 'POST /vc/buyer-agent/issue', subjectDid: params.agentDID,
+       scopes: ['BuyerAgentCredential'], validFrom: now, validUntil: expiry,
+       callerIp: null });
 
   return {
     '@context': [

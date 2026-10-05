@@ -175,7 +175,9 @@ app.post('/internal/harness/publish-proof', async (c) => {
     iat: Math.floor(now.getTime() / 1000),
     exp: Math.floor(expiry.getTime() / 1000),
     hash: proofHash,
-  });
+  }, { route: 'POST /internal/harness/publish-proof', subjectDid: 'did:web:moltrust.ch#moltguard',
+       scopes: ['TrustProof'], validFrom: now, validUntil: expiry,
+       callerIp: c.req.header('x-forwarded-for') ?? null });
 
   // Simulate on-chain anchor (hash-based tx ID)
   const anchorTx = `0x${proofHash.slice(0, 64)}`;

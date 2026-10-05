@@ -36,13 +36,33 @@ function base64url(data: Buffer | string): string {
   return buf.toString('base64url');
 }
 
+import { registerSignature, type SignatureRecord } from './signatureRegister.js';
+
 export interface CreateJWSOptions {
   /** Stamp the payload version into the JWS header. Only the authorization
    *  attestations use this; every other caller's tokens stay byte-identical. */
   attestationVersion?: number;
 }
 
-export async function createJWS(payload: object, opts: CreateJWSOptions = {}): Promise<string> {
+/**
+ * Sign a payload, after writing down that we did.
+ *
+ * `record` is required, not optional, and that is the whole mechanism. On
+ * 2026-10-05 this service had issued 28 signed authorization attestations it
+ * could not enumerate, because the issuing route simply never wrote a row and
+ * nothing obliged it to. An optional parameter would have been forgotten the
+ * same way. A required one makes the compiler ask every one of the fourteen
+ * issuers who the subject is, what was granted and how long it lasts.
+ *
+ * The register write happens first and throws on failure, so there is no path
+ * from here to a signature nobody recorded.
+ */
+export async function createJWS(
+  payload: object,
+  record: SignatureRecord,
+  opts: CreateJWSOptions = {},
+): Promise<string> {
+  await registerSignature(payload, record);
   const privateKey = await getSigningKey();
   if (!privateKey) {
     // Fallback to placeholder if no key configured
@@ -178,7 +198,8 @@ export async function issueCredential(address: Address, authorizationEnvelope?: 
     iat: Math.floor(now.getTime() / 1000),
     exp: Math.floor(expiry.getTime() / 1000),
     vc: credentialSubject,
-  });
+  }, { route: 'issueCredential', subjectDid: credentialSubject.id, scopes: ['AgentTrustCredential'],
+       validFrom: now, validUntil: expiry, callerIp: null });
 
   return {
     '@context': [

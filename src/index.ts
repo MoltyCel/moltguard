@@ -14,6 +14,7 @@ import travelRoutes from './routes/travel.js';
 import skillRoutes from './routes/skill.js';
 import predictionRoutes, { vcPredictionRoute } from './routes/prediction.js';
 import transparencyRoutes from './routes/transparency.js';
+import registryRoutes from './routes/registry.js';
 import harnessRoutes from './routes/harness.js';
 import salesguardRoutes from './routes/salesguard.js';
 import aaeRoutes from './routes/aae.js';
@@ -63,6 +64,7 @@ app.route('/', walletRoutes);
 
 // Public transparency routes (no auth)
 app.route('/', transparencyRoutes);
+app.route('/', registryRoutes);
 
 // Public events feed — Polymarket anomaly + multi_outcome events
 app.route('/', eventsRoutes);

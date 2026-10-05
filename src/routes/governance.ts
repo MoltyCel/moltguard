@@ -294,7 +294,13 @@ app.post('/governance/validate-capabilities', async (c) => {
       evaluation_timestamp: now.toISOString(),
       expires_at: expiresAt.toISOString(),
     };
-    const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
+    const jws = await createJWS(attestation, {
+      route: 'POST /governance/validate-capabilities',
+      subjectDid: attestation.sub,
+      scopes: attestation.active_constraints?.scope ?? [],
+      validFrom: now, validUntil: expiresAt,
+      callerIp: c.req.header('x-forwarded-for') ?? null,
+    }, { attestationVersion: ATTESTATION_VERSION_CURRENT });
     return c.json({ ...attestation, jws });
   }
 
@@ -327,7 +333,13 @@ app.post('/governance/validate-capabilities', async (c) => {
           evaluation_timestamp: context.evaluation_timestamp,
           expires_at: expiresAt.toISOString(),
         };
-        const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
+        const jws = await createJWS(attestation, {
+      route: 'POST /governance/validate-capabilities',
+      subjectDid: attestation.sub,
+      scopes: attestation.active_constraints?.scope ?? [],
+      validFrom: now, validUntil: expiresAt,
+      callerIp: c.req.header('x-forwarded-for') ?? null,
+    }, { attestationVersion: ATTESTATION_VERSION_CURRENT });
         return c.json({ ...attestation, jws });
       }
     }
@@ -363,7 +375,13 @@ app.post('/governance/validate-capabilities', async (c) => {
       evaluation_timestamp: now.toISOString(),
       expires_at: expiresAt.toISOString(),
     };
-    const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
+    const jws = await createJWS(attestation, {
+      route: 'POST /governance/validate-capabilities',
+      subjectDid: attestation.sub,
+      scopes: attestation.active_constraints?.scope ?? [],
+      validFrom: now, validUntil: expiresAt,
+      callerIp: c.req.header('x-forwarded-for') ?? null,
+    }, { attestationVersion: ATTESTATION_VERSION_CURRENT });
     return c.json({ ...attestation, jws });
   }
 
@@ -415,7 +433,13 @@ app.post('/governance/validate-capabilities', async (c) => {
   }
 
   // 11. Sign with Ed25519
-  const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
+  const jws = await createJWS(attestation, {
+      route: 'POST /governance/validate-capabilities',
+      subjectDid: attestation.sub,
+      scopes: attestation.active_constraints?.scope ?? [],
+      validFrom: now, validUntil: expiresAt,
+      callerIp: c.req.header('x-forwarded-for') ?? null,
+    }, { attestationVersion: ATTESTATION_VERSION_CURRENT });
 
   return c.json({
     ...attestation,
