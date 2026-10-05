@@ -8,10 +8,12 @@ import {
   SERVICE_NAME,
   SERVICE_TAGS,
   SERVICE_ICON_URL,
+  SERVICE_DESCRIPTION,
   GUARD_PREFIX,
+  maskAddresses,
 } from './x402-bazaar.js';
 import { X402_PRICES, X402_FREE_PATHS, matchPriceKey } from '../middleware/x402-prices.js';
-import { buildResourceInfo } from './x402-authorization.js';
+import { buildResourceInfo, buildPaymentRequirements } from './x402-authorization.js';
 
 describe('the catalogue covers exactly what we charge for', () => {
   it('every priced endpoint has an entry', () => {
@@ -63,13 +65,16 @@ describe('routeTemplate', () => {
   });
 });
 
-describe('pathParams come from the request, not from the table', () => {
-  it('reads the concrete value out of the path', () => {
-    const ext = buildBazaarExtension('GET', '/api/agent/score/0x380238347e58435f40B4da1F1A045A271D5838F5');
+describe('pathParams come from the table, never from the request', () => {
+  it('advertises the fixed example and not the address that paid', () => {
+    const paid = '0x380238347e58435f40B4da1F1A045A271D5838F5';
+    const ext = buildBazaarExtension('GET', `/api/agent/score/${paid}`);
     expect(ext?.routeTemplate).toBe('/guard/api/agent/score/:address');
-    expect((ext?.info.input as any).pathParams).toEqual({
-      address: '0x380238347e58435f40B4da1F1A045A271D5838F5',
-    });
+    expect((ext?.info.input as any).pathParams).toEqual({ address: '0x…' });
+    // This assertion is the whole point. Until 2026-10-05 the field carried
+    // the caller's address, and the first caller was us, so our own test
+    // wallet stood in the public catalogue entry for twelve days.
+    expect(JSON.stringify(ext)).not.toContain(paid);
   });
 
   it('omits them rather than guessing when the path does not fit the template', () => {
@@ -163,11 +168,87 @@ describe('service metadata stays inside what a facilitator will keep', () => {
   });
 
   it('rides on resource, where clients echo it, and does not disturb the v2 fields', () => {
-    const r = buildResourceInfo('/api/agent/score/0xabc') as any;
-    expect(r.url).toBe('https://api.moltrust.ch/guard/api/agent/score/0xabc');
+    const r = buildResourceInfo('GET', '/api/agent/score/0xabc') as any;
+    // The route, not the request: a facilitator catalogues this string.
+    expect(r.url).toBe('https://api.moltrust.ch/guard/api/agent/score/:address');
+    expect(r.description).toBe(BAZAAR_ENDPOINTS['GET /api/agent/score'].description);
     expect(r.mimeType).toBe('application/json');
     expect(r.serviceName).toBe(SERVICE_NAME);
     expect(r.tags).toEqual([...SERVICE_TAGS]);
     expect(r.iconUrl).toBe(SERVICE_ICON_URL);
+  });
+
+  it('describes the endpoint without quoting the path or the caller', () => {
+    const paid = '0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38';
+    const r = buildResourceInfo('GET', `/api/agent/detail/${paid}`) as any;
+    expect(r.description).not.toContain(paid);
+    expect(r.description).not.toContain('/api/agent/detail');
+    expect(r.url).not.toContain(paid);
+  });
+
+  it('masks an address even on a priced path the table does not describe', () => {
+    const paid = '0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38';
+    expect(maskAddresses(`/nothing/here/${paid}`)).toBe('/nothing/here/0x…');
+    const r = buildResourceInfo('GET', `/nothing/here/${paid}`) as any;
+    expect(r.url).not.toContain(paid);
+    expect(r.description).toBe(SERVICE_DESCRIPTION);
+  });
+});
+
+// An address is allowed to leave the process in the two fields that exist to
+// carry one: the USDC contract and the wallet that gets paid. Anywhere else in
+// an outward payload it is something about a caller or about us that nobody
+// asked us to publish — and the catalogue entry is permanent and public.
+describe('no 20-byte address in an outward field, except where one belongs', () => {
+  const ADDRESS = /0x[0-9a-fA-F]{40}/;
+  const ALLOWED = new Set(['asset', 'payTo']);
+
+  /** Every field of the 402 body, as `path -> value`, flattened. */
+  function fields(value: unknown, at = ''): Array<[string, string]> {
+    if (typeof value === 'string') return [[at, value]];
+    if (Array.isArray(value)) return value.flatMap((v, i) => fields(v, `${at}[${i}]`));
+    if (value && typeof value === 'object') {
+      return Object.entries(value).flatMap(([k, v]) => fields(v, at ? `${at}.${k}` : k));
+    }
+    return [];
+  }
+
+  // The same object the middleware sends, assembled from the same builders.
+  function outwardBody(method: string, path: string) {
+    const extensions = buildExtensions(method, path);
+    return {
+      x402Version: 2,
+      resource: buildResourceInfo(method, path),
+      accepts: [buildPaymentRequirements(
+        path, 0.05, 'eip155:8453', '0x380238347e58435f40B4da1F1A045A271D5838F5',
+      )],
+      ...(extensions ? { extensions } : {}),
+    };
+  }
+
+  // One case per priced endpoint, called the way a real caller calls it: with
+  // a concrete address in the path.
+  const PAID = '0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38';
+  for (const key of Object.keys(X402_PRICES)) {
+    const [method, route] = key.split(' ');
+    const entry = BAZAAR_ENDPOINTS[key];
+    const takesParam = entry && 'routeTemplate' in entry && entry.routeTemplate;
+    const path = takesParam ? `${route}/${PAID}` : route;
+
+    it(`${key} publishes no address outside asset and payTo`, () => {
+      const offenders = fields(outwardBody(method, path))
+        .filter(([, v]) => ADDRESS.test(v))
+        .filter(([at]) => !ALLOWED.has(at.split('.').pop() ?? ''));
+      expect(offenders, `fields carrying an address: ${JSON.stringify(offenders)}`).toEqual([]);
+    });
+  }
+
+  it('fails when an address is put back, so the rule is not vacuous', () => {
+    const body: any = outwardBody('GET', `/api/agent/score/${PAID}`);
+    body.resource.description = `MolTrust API — /api/agent/score/${PAID}`;
+    const offenders = fields(body)
+      .filter(([, v]) => ADDRESS.test(v))
+      .filter(([at]) => !ALLOWED.has(at.split('.').pop() ?? ''));
+    expect(offenders.map(([at]) => at)).toEqual(['resource.description']);
   });
 });

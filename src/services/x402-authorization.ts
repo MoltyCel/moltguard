@@ -10,7 +10,10 @@
 // whether a payload is worth spending a facilitator call on.
 
 import type { Address } from 'viem';
-import { SERVICE_NAME, SERVICE_TAGS, SERVICE_ICON_URL } from './x402-bazaar.js';
+import {
+  SERVICE_NAME, SERVICE_TAGS, SERVICE_ICON_URL, SERVICE_DESCRIPTION,
+  GUARD_PREFIX, bazaarEntryFor, maskAddresses,
+} from './x402-bazaar.js';
 
 export const USDC_DECIMALS = 6;
 export const USDC_CONTRACT_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -243,11 +246,22 @@ export function buildPaymentRequirements(
   };
 }
 
-/** ResourceInfo per @x402/core: what is being bought, separate from the terms. */
-export function buildResourceInfo(path: string) {
+/**
+ * ResourceInfo per @x402/core: what is being bought, separate from the terms.
+ *
+ * Both fields describe the route, not the request. They used to be built from
+ * the concrete path, so the address of whoever paid first ended up in the
+ * public catalogue entry — ours did, from 2026-09-23 until 2026-10-05. The
+ * route template and the table's own sentence say the same thing about the
+ * endpoint without saying anything about a caller.
+ */
+export function buildResourceInfo(method: string, path: string) {
+  const entry = bazaarEntryFor(method, path);
+  const route = (entry && 'routeTemplate' in entry && entry.routeTemplate)
+    || `${GUARD_PREFIX}${maskAddresses(path)}`;
   return {
-    url: `https://api.moltrust.ch/guard${path}`,
-    description: `MolTrust API — ${path}`,
+    url: `https://api.moltrust.ch${route}`,
+    description: entry?.description ?? SERVICE_DESCRIPTION,
     mimeType: 'application/json',
     // Service metadata the bazaar extension reads for catalogue display. It is
     // optional and additive: a facilitator that does not know these fields

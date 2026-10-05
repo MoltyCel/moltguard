@@ -279,7 +279,7 @@ async function settleAuthorization(
   const settled = await settle(
     {
       x402Version: 2,
-      resource: buildResourceInfo(path),
+      resource: buildResourceInfo(method, path),
       accepted: requirements,
       payload: checked.payload.payload,
       ...(extensions ? { extensions } : {}),
