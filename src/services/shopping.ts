@@ -3,11 +3,7 @@ import { verifyJWS } from './credential.js';
 import { calculateAgentScore } from './scoring.js';
 import type { Address } from 'viem';
 import { isValidAddress } from '../types/index.js';
-import {
-  BuyerAgentCredentialSchema,
-  type BuyerAgentCredential,
-  type VerificationReceipt,
-} from '../schemas/BuyerAgentCredential.js';
+import { BuyerAgentCredentialSchema, type BuyerAgentCredential, type VerificationReceipt, UNVERIFIED_HUMAN } from '../schemas/BuyerAgentCredential.js';
 import { createJWS } from './credential.js';
 import { resolveAAE } from '../lib/aae.js';
 
@@ -58,6 +54,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: '',
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -76,6 +73,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
         receiptId: randomUUID(),
         agentDID,
         humanDID: vc.credentialSubject?.humanDID || '',
+        humanDIDVerification: UNVERIFIED_HUMAN,
         merchant,
         amount,
         currency,
@@ -93,6 +91,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: '',
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -110,6 +109,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: subject.humanDID,
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -127,6 +127,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: subject.humanDID,
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -143,6 +144,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: subject.humanDID,
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -159,6 +161,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: subject.humanDID,
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -176,6 +179,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: subject.humanDID,
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -207,6 +211,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: subject.humanDID,
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -222,6 +227,7 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
       receiptId: randomUUID(),
       agentDID,
       humanDID: subject.humanDID,
+      humanDIDVerification: UNVERIFIED_HUMAN,
       merchant,
       amount,
       currency,
@@ -239,14 +245,20 @@ export async function verifyShoppingTransaction(req: VerifyRequest): Promise<Ver
     receiptId: randomUUID(),
     agentDID,
     humanDID: subject.humanDID,
+    humanDIDVerification: UNVERIFIED_HUMAN,
     merchant,
     amount,
     currency,
     guardScore,
     result: 'approved',
     timestamp: now.toISOString(),
-    // On-chain anchoring placeholder — would write receipt hash to Base in production
-    onChainTx: `0x${Buffer.from(randomUUID()).toString('hex').slice(0, 64)}`,
+    // There was an `onChainTx` here, filled with `0x` + hex of a random UUID: a
+    // 32-byte string that reads as a Base transaction hash and points at
+    // nothing. Nothing was ever anchored. A reader cannot tell a fabricated
+    // hash from a real one without querying the chain, which is the whole
+    // reason the field would be worth having. Removed rather than emptied —
+    // the field is gone from the type too, so it cannot come back as a
+    // placeholder without someone implementing the anchor.
   };
 
   // Store receipt
@@ -277,6 +289,7 @@ export async function issueBuyerAgentVC(params: {
   const credentialSubject = {
     id: params.agentDID,
     humanDID: params.humanDID,
+    humanDIDVerification: UNVERIFIED_HUMAN,
     authorization: {
       spendLimit: params.spendLimit,
       currency: params.currency,
