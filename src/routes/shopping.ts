@@ -6,6 +6,7 @@ import {
   getReceipt,
   issueBuyerAgentVC,
 } from '../services/shopping.js';
+import { disabled, OFF } from '../lib/disabled.js';
 
 const app = new Hono();
 
@@ -35,6 +36,13 @@ app.get('/shopping/receipt/:id', (c) => {
 
 // Free (early access): verify a shopping transaction
 app.post('/shopping/verify', async (c) => {
+  // Disabled 2026-10-05. Live probe that day: a hand-written vc with no
+  // proof.jws, no validUntil and no spendLimit, amount 999999, returned 200
+  // with a receipt — the signature check never ran (`if (vc.proof?.jws)`),
+  // `new Date(undefined) < now` is false so nothing expired, and
+  // `999999 > undefined` is false so no limit applied.
+  if (OFF) return disabled(c, 'POST /shopping/verify accepted a credential with no signature, '
+                   + 'no expiry and no spend limit, and answered with a receipt.');
   const body = await c.req.json().catch(() => ({}));
   const { agentDID, vc, merchant, amount, currency } = body;
 

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import pool from '../services/db.js';
 import { createJWS } from '../services/credential.js';
 import { SIGNAL_TYPE_V2, ATTESTATION_VERSION_CURRENT } from '../services/attestation.js';
+import { disabled, OFF } from '../lib/disabled.js';
 
 const app = new Hono();
 
@@ -224,6 +225,15 @@ function evaluateCapabilities(
 
 // POST /governance/validate-capabilities
 app.post('/governance/validate-capabilities', async (c) => {
+  // Disabled 2026-10-05. Live probe that day, with no credential of any kind:
+  // agent_did did:base:0x3802… (score 85) returned decision "permit" for both
+  // requested scopes, payments/transfer AND admin/keys, with spend_limit 10000
+  // and a jws signed by our key. `agent_did` is a body field, so the caller
+  // never shows the DID is its own. 28 attestations were issued this way
+  // between 2026-09-20 and 2026-10-05.
+  if (OFF) return disabled(c, 'POST /governance/validate-capabilities issued a signed attestation '
+                   + 'granting arbitrary scopes to any DID named in the body, with no '
+                   + 'holder binding and no authentication.');
   const body = await c.req.json();
   const { agent_did, requested_capabilities, context } = body;
 
