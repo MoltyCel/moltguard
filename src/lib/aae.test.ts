@@ -123,6 +123,39 @@ describe('the caller may not widen', () => {
   });
 });
 
+describe('a list the base does not have', () => {
+  // The two shapes mean opposite things when the base carries none, and the
+  // first version of narrowAAE treated them alike: it took the caller's list
+  // unexamined and signed it.
+  it('refuses a permission list the base does not grant', () => {
+    const b = base();
+    (b.mandate as { purpose?: string[] }).purpose = undefined;
+    expect(() => narrowAAE(b, { mandate: { purpose: ['administration'] } } as unknown as Partial<AAE>))
+      .toThrow(WideningError);
+  });
+
+  it('accepts a restriction list, because an absent one means unrestricted', () => {
+    // evaluate() enforces mandate.resources only when it is present, so a
+    // caller adding one confines the mandate rather than extending it.
+    const b = base();
+    expect(b.mandate.resources).toBeUndefined();
+    const out = narrowAAE(b, { mandate: { resources: ['orders/*'] } } as Partial<AAE>);
+    expect(out.mandate.resources).toEqual(['orders/*']);
+  });
+
+  it('accepts a jurisdiction list the base does not carry', () => {
+    const out = narrowAAE(base(), { constraints: { scope: { jurisdictions: ['CH'] } } } as Partial<AAE>);
+    expect(out.constraints.scope!.jurisdictions).toEqual(['CH']);
+  });
+
+  it('still narrows a restriction list the base does carry', () => {
+    const b = base();
+    b.mandate.resources = ['orders/*'];
+    expect(() => narrowAAE(b, { mandate: { resources: ['payouts/all'] } } as Partial<AAE>))
+      .toThrow(WideningError);
+  });
+});
+
 describe('the envelope that was possible until 2026-10-05', () => {
   it('is refused in full', () => {
     // Every field of this used to win the merge, and MoltGuard signed the

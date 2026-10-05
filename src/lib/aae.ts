@@ -71,12 +71,42 @@ function covers(pattern: string, candidate: string): boolean {
   return false;
 }
 
-function subsetOrThrow(field: string, base: string[] | undefined, want: string[] | undefined) {
-  if (!want) return base;
-  if (!base) return want;
+/**
+ * Two list shapes, opposite meanings when the base has none, and the first
+ * version of this file treated them the same.
+ *
+ * A PERMISSION list says what is allowed: `mandate.allowedActions`,
+ * `mandate.purpose`. An absent one grants nothing, so a caller introducing one
+ * is granting itself authority and is refused.
+ *
+ * A RESTRICTION list says what the authority is confined to:
+ * `mandate.resources`, `scope.jurisdictions`, `obligations.toolAllowlist`. The
+ * library's evaluate() enforces each of these only when it is present — see
+ * evaluate.js steps 4 and 5, `if (ctx.resource && aae.mandate.resources)` — so
+ * an absent one means unrestricted and a caller supplying one narrows. Taking
+ * it is correct, and it is spelled out here so the next read does not file it
+ * as the same defect twice.
+ */
+function covered(field: string, base: string[], want: string[]) {
   const loose = want.filter((w) => !base.some((b) => covers(b, w)));
   if (loose.length) throw new WideningError(field, `${loose.join(', ')} not covered by ${base.join(', ')}`);
   return [...want];
+}
+
+/** Absent base grants nothing, so the caller may not introduce a list. */
+function permissionList(field: string, base: string[] | undefined, want: string[] | undefined) {
+  if (!want) return base;
+  if (!base || base.length === 0) {
+    throw new WideningError(field, `the base grants none, so ${want.join(', ')} cannot be added`);
+  }
+  return covered(field, base, want);
+}
+
+/** Absent base means unrestricted, so a list from the caller narrows. */
+function restrictionList(field: string, base: string[] | undefined, want: string[] | undefined) {
+  if (!want) return base;
+  if (!base) return [...want];
+  return covered(field, base, want);
 }
 
 /** A number the caller may only move downwards. */
@@ -109,11 +139,11 @@ export function narrowAAE(base: AAE, override?: Partial<AAE>): AAE {
 
   const mandate: AAE['mandate'] = {
     ...bm,
-    purpose: subsetOrThrow('mandate.purpose', bm.purpose, m.purpose) as AAE['mandate']['purpose'],
-    allowedActions: subsetOrThrow('mandate.allowedActions', bm.allowedActions, m.allowedActions)!,
+    purpose: permissionList('mandate.purpose', bm.purpose, m.purpose) as AAE['mandate']['purpose'],
+    allowedActions: permissionList('mandate.allowedActions', bm.allowedActions, m.allowedActions)!,
     // More denials is narrower, so the two lists are added together.
     deniedActions: [...new Set([...(bm.deniedActions ?? []), ...(m.deniedActions ?? [])])],
-    resources: subsetOrThrow('mandate.resources', bm.resources, m.resources),
+    resources: restrictionList('mandate.resources', bm.resources, m.resources),
   };
   if (m.delegation) {
     const bd = bm.delegation;
@@ -153,7 +183,7 @@ export function narrowAAE(base: AAE, override?: Partial<AAE>): AAE {
       ...c.scope,
       counterpartyMinScore: atLeast('scope.counterpartyMinScore', bc.scope?.counterpartyMinScore,
                                     c.scope?.counterpartyMinScore),
-      jurisdictions: subsetOrThrow('scope.jurisdictions', bc.scope?.jurisdictions, c.scope?.jurisdictions),
+      jurisdictions: restrictionList('scope.jurisdictions', bc.scope?.jurisdictions, c.scope?.jurisdictions),
     };
   }
   if (bc.obligations || c.obligations) {
@@ -163,7 +193,7 @@ export function narrowAAE(base: AAE, override?: Partial<AAE>): AAE {
       requireHumanApprovalAbove: atMost('obligations.requireHumanApprovalAbove',
                                         bc.obligations?.requireHumanApprovalAbove,
                                         c.obligations?.requireHumanApprovalAbove),
-      toolAllowlist: subsetOrThrow('obligations.toolAllowlist', bc.obligations?.toolAllowlist,
+      toolAllowlist: restrictionList('obligations.toolAllowlist', bc.obligations?.toolAllowlist,
                                    c.obligations?.toolAllowlist),
     };
   }
