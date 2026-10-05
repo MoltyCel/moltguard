@@ -4,7 +4,6 @@ export interface PredictionTrackCredentialSubject {
   platform: string;
   predictionScore: number;
   scoreBreakdown: {
-    winRate: number;
     roi: number;
     volume: number;
     sampleSize: number;
@@ -12,8 +11,6 @@ export interface PredictionTrackCredentialSubject {
   };
   trackRecord: {
     totalBets: number;
-    wins: number;
-    losses: number;
     totalVolume: number;
     netPnl: number;
   };

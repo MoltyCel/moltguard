@@ -1,5 +1,11 @@
+// `winRate` was a component here and is gone. It was 30 % of the score and it
+// was built on `wins`/`losses`, which routes/prediction.ts derived from a fixed
+// 55/40 quota — the Polymarket query returns no trade outcome and stores
+// `outcome: undefined` explicitly, so no source for a win or a loss exists on
+// this server. The four surviving components are renormalised below by dividing
+// each original weight by the 0.70 they summed to, which keeps their weighting
+// relative to each other exactly as it was. Scores change for every wallet.
 export interface ScoreBreakdown {
-  winRate: number;
   roi: number;
   volume: number;
   sampleSize: number;
@@ -11,23 +17,18 @@ export interface ScoreResult {
   breakdown: ScoreBreakdown;
 }
 
+/** Sum of the weights that remain after winRate was removed. */
+const SURVIVING = 0.25 + 0.15 + 0.20 + 0.10;
+
 export function calculatePredictionScore(stats: {
   totalBets: number;
-  wins: number;
-  losses: number;
   totalVolume: number;
   netPnl: number;
   lastTradeDate?: string | null;
 }): ScoreResult {
-  if (stats.totalBets === 0) return { score: 0, breakdown: { winRate: 0, roi: 0, volume: 0, sampleSize: 0, recency: 0 } };
+  if (stats.totalBets === 0) return { score: 0, breakdown: { roi: 0, volume: 0, sampleSize: 0, recency: 0 } };
 
-  const resolved = stats.wins + stats.losses;
-
-  // Win Rate (30%) — maps 0-100
-  const wr = resolved > 0 ? stats.wins / resolved : 0;
-  const winRateScore = Math.min(100, Math.max(0, wr <= 0.5 ? wr * 100 : 50 + (wr - 0.5) * 200));
-
-  // ROI (25%) — capped [-100%, +200%], mapped 0-100
+  // ROI (25% of the original weighting) — capped [-100%, +200%], mapped 0-100
   const roi = stats.totalVolume > 0 ? stats.netPnl / stats.totalVolume : 0;
   const roiClamped = Math.max(-1, Math.min(2, roi));
   const roiScore = Math.round(((roiClamped + 1) / 3) * 100);
@@ -49,17 +50,15 @@ export function calculatePredictionScore(stats: {
   }
 
   const score = Math.round(
-    winRateScore * 0.30 +
-    roiScore * 0.25 +
-    volScore * 0.15 +
-    sampleScore * 0.20 +
-    recencyScore * 0.10
+    roiScore * (0.25 / SURVIVING) +
+    volScore * (0.15 / SURVIVING) +
+    sampleScore * (0.20 / SURVIVING) +
+    recencyScore * (0.10 / SURVIVING)
   );
 
   return {
     score: Math.max(0, Math.min(100, score)),
     breakdown: {
-      winRate: Math.round(winRateScore),
       roi: Math.round(roiScore),
       volume: Math.round(volScore),
       sampleSize: Math.round(sampleScore),

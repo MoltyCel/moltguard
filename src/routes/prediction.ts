@@ -24,8 +24,11 @@ prediction.post("/wallet-link", async (c) => {
   const activity = await fetchWalletActivity(address);
   if (activity && activity.trades.length > 0) {
     const totalBets = activity.trades.length;
-    const wins = Math.round(totalBets * (activity.pnl > 0 ? 0.55 : 0.40));
-    const losses = totalBets - wins;
+    // `wins` and `losses` were computed here from a fixed quota — 55 % of trades
+    // if PnL was positive, 40 % otherwise. There is no source for either on this
+    // server: fetchWalletActivity returns no outcome and the event rows below
+    // store `outcome: undefined` on purpose. Both fields are gone, and with
+    // them the winRate component of predictionScore.
 
     const events = activity.trades.map((t) => ({
       wallet_address: address,
@@ -41,8 +44,6 @@ prediction.post("/wallet-link", async (c) => {
 
     const stats = {
       totalBets,
-      wins,
-      losses,
       totalVolume: activity.totalVolume,
       netPnl: activity.pnl,
     };
@@ -60,8 +61,6 @@ prediction.post("/wallet-link", async (c) => {
       linked_did: updated!.linked_did,
       predictionScore: updated!.prediction_score,
       totalBets: updated!.total_bets,
-      wins: updated!.wins,
-      losses: updated!.losses,
       totalVolume: parseFloat(String(updated!.total_volume)),
       netPnl: parseFloat(String(updated!.net_pnl)),
       scoreBreakdown: updated!.score_breakdown,
@@ -101,8 +100,6 @@ prediction.get("/wallet/:address", async (c) => {
     predictionScore: wallet.prediction_score,
     scoreBreakdown: wallet.score_breakdown,
     totalBets: wallet.total_bets,
-    wins: wallet.wins,
-    losses: wallet.losses,
     totalVolume: parseFloat(String(wallet.total_volume)),
     netPnl: parseFloat(String(wallet.net_pnl)),
     lastSynced: wallet.last_synced,
@@ -180,8 +177,6 @@ prediction.get("/leaderboard", async (c) => {
       did: w.linked_did,
       predictionScore: w.prediction_score,
       totalBets: w.total_bets,
-      wins: w.wins,
-      losses: w.losses,
       totalVolume: parseFloat(String(w.total_volume)),
       netPnl: parseFloat(String(w.net_pnl)),
       scoreBreakdown: w.score_breakdown,
@@ -218,8 +213,6 @@ vcPredictionRoute.post("/issue", async (c) => {
       scoreBreakdown: wallet.score_breakdown,
       trackRecord: {
         totalBets: wallet.total_bets,
-        wins: wallet.wins,
-        losses: wallet.losses,
         totalVolume: parseFloat(String(wallet.total_volume)),
         netPnl: parseFloat(String(wallet.net_pnl)),
       },
