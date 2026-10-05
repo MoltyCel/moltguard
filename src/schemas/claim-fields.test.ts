@@ -1,32 +1,31 @@
 // The invariant: no field whose NAME claims a check, a chain or a signature may
 // carry a value that does not come from exactly that source.
 //
-// Why it is a static check over the source and not a runtime assertion: the
-// failure mode is a developer writing a plausible value into a field the reader
-// will trust. `onChainTx` held `0x` + hex of a random UUID in two services for
+// Why a static check over the source and not a runtime assertion: the failure
+// mode is a developer writing a plausible value into a field the reader will
+// trust. `onChainTx` held `0x` + hex of a random UUID in two services for
 // months. It typechecked, it ran, every test passed, and a merchant reading the
-// receipt got a 32-byte string that reads as a Base transaction hash and points
-// at nothing. No runtime assertion catches that, because the value is
-// well-formed. The only thing that catches it is reading the assignment.
+// receipt got 32 bytes that read as a Base transaction hash and point at
+// nothing. No runtime assertion catches that, because the value is well-formed.
 //
-// What this test can prove and what it cannot: fabrication is detectable, because
-// `randomUUID()` and `Math.random()` are visible in the expression. A value that
-// came out of the request body is NOT reliably detectable here — it arrives
-// through a parameter three calls deep and looks like any other variable. So the
-// client-asserted class is handled by the declared registry below: every
-// claim-bearing field is listed with where its value is established. A list that
-// has to be extended by hand is the point, because adding the entry is where
-// someone has to write down the provenance.
+// The first version of this file had only the random-value patterns and ran
+// green while THREE sha256-built anchors sat in the same tree: skill.ts,
+// harness.ts and salesguard.ts. A hash looks deterministic and reproducible,
+// which makes it a better forgery than a random one, not a worse. Two things
+// were wrong: the pattern list, and reading one line at a time while the
+// assignments span four. Both are fixed below, and the three sites are in the
+// fixture at the bottom so neither can regress silently.
 //
-// The registry check is a CAP today, not a gate: 21 fields in this service have
-// no provenance written down, and their origins are being traced one by one.
-// The cap stops the number growing in the meantime. It arms as a gate in the
-// change that brings the traced provenance with it.
+// What this file can prove and what it cannot: a value computed in this process
+// is visible in the expression. A value that came out of the request body is
+// not — it arrives through a parameter three calls deep and looks like any
+// other variable. That class is handled by the provenance registry, which is a
+// cap today and a gate once each origin has been traced.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** A field name that promises a chain, a check or a signature. */
+/** A field name that promises a check, a chain or a signature. */
 const CLAIMS = [
   /^(on)?chain([A-Z_].*)?$/i, /Tx$/, /^tx[A-Z_]?/i, /anchor/i, /^block/i,
   /settlement/i, /verified$/i, /^verif/i, /confirmed/i, /attested/i,
@@ -34,31 +33,35 @@ const CLAIMS = [
   /verificationMethod/i, /^kid$/,
 ];
 
-/** Expressions that make a value up on the spot. */
+/**
+ * A name that promises a transaction or an anchor ON A CHAIN. Narrower than
+ * CLAIMS on purpose: a transaction id is assigned by a network, so it cannot be
+ * computed here at all, while a hash or a signature legitimately can.
+ */
+const CHAIN_CLAIMS = [/Tx$/i, /anchor/i, /txHash/i, /settlement/i];
+
+/** Makes a value up on the spot. Counts against any claim-bearing field. */
 const FABRICATED = [
   /randomUUID/, /Math\.random/, /randomBytes/, /\buuid\(/, /crypto\.getRandomValues/,
 ];
 
+/** Computes a value in this process. Counts only against a CHAIN_CLAIMS name. */
+const LOCALLY_COMPUTED = [/createHash/, /\.digest\(/, /createHmac/];
+
 /**
  * Every claim-bearing field this service emits, and where its value is
- * established. Adding a field here is a statement about provenance; the test
- * only checks that the statement exists and that nothing fabricates.
+ * established. Adding a field here is a statement about provenance.
  */
 const REGISTRY: Record<string, string> = {
-  // Real: produced by signing with MoltGuard's key over the credential.
   jws: 'createJWS() over the credential payload, MoltGuard signing key',
   signature: 'createJWS() / verifyJWS(), MoltGuard signing key',
   proof: 'the proof block of a W3C VC, carrying the jws above',
   proofPurpose: 'constant of the W3C VC data model, not a measurement',
   verificationMethod: 'the did:web key id that signed, from config',
-  // Real: the result of actually running a check in this process.
   verified: 'the boolean a check in this process returned; false where no '
           + 'check exists (see UNVERIFIED_HUMAN)',
   humanDIDVerification: 'UNVERIFIED_HUMAN — a constant stating that nothing '
                       + 'establishes humanDID, carried next to the claim',
-  verifyJWS: 'function name, not a field',
-  // Declared absent: there is no anchoring in this service. If an onChainTx
-  // comes back, it has to come back with a chain write behind it.
 };
 
 function sources(dir: string): string[] {
@@ -72,7 +75,7 @@ function sources(dir: string): string[] {
   return out;
 }
 
-/** Strip comments so prose about a defect does not read as the defect. */
+/** Strip comments, so prose about a defect does not read as the defect. */
 function code(text: string): string {
   return text
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -81,72 +84,108 @@ function code(text: string): string {
 
 type Hit = { file: string; line: number; field: string; expr: string };
 
-function assignments(): Hit[] {
+const PROPERTY = /^\s*([A-Za-z_$][\w$]*)\s*:\s*(.+?),(?:\s|$)/;
+const DECLARATION = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);/;
+
+/**
+ * Two collectors, because the two questions have different scopes.
+ *
+ * `emitted` takes object-literal properties only: those are what leaves the
+ * service in a response body. A local variable is not an output field, and
+ * sweeping them in is what made an earlier run report `PROOFS_DIR` and
+ * `signatureBytes` as findings.
+ *
+ * `chainBound` also takes declarations, and joins each line with the four that
+ * follow it, because the assignment this test exists for spans four lines:
+ *   const anchorTx = `0x${createHash('sha256')
+ *     .update(…)
+ *     .digest('hex')
+ *     .slice(0, 64)}`;
+ * The reported line stays the one the name is on.
+ */
+function collect(withDeclarations: boolean, names: RegExp[]): Hit[] {
   const out: Hit[] = [];
   for (const f of sources('src')) {
     const lines = code(readFileSync(f, 'utf8')).split('\n');
     lines.forEach((line, i) => {
-      // An object-literal property: `name: <expr>,`. A type declaration ends in
-      // `;` and is skipped — it declares a shape, it does not carry a value.
-      const m = /^\s*([A-Za-z_$][\w$]*)\s*:\s*(.+?),\s*$/.exec(line);
-      if (!m) return;
-      const [, field, expr] = m;
-      if (/^(string|number|boolean|null|undefined)$/.test(expr.trim())) return;
-      if (!CLAIMS.some((r) => r.test(field))) return;
-      out.push({ file: f, line: i + 1, field, expr: expr.trim() });
+      const one = line;
+      const window = lines.slice(i, i + 5).join(' ');
+      const tries: Array<[RegExp, string]> = withDeclarations
+        ? [[PROPERTY, window], [DECLARATION, window]]
+        : [[PROPERTY, one]];
+      for (const [pat, text] of tries) {
+        const m = pat.exec(text);
+        if (!m) continue;
+        const [, field, expr] = m;
+        if (/^(string|number|boolean|null|undefined)$/.test(expr.trim())) continue;
+        if (!names.some((r) => r.test(field))) continue;
+        out.push({ file: f, line: i + 1, field, expr: expr.trim() });
+        break;
+      }
     });
   }
   return out;
 }
 
-describe('no claim-bearing field carries a value from somewhere else', () => {
-  const hits = assignments();
+const emitted = collect(false, CLAIMS);
+const chainBound = collect(true, CHAIN_CLAIMS);
 
+const show = (hs: Hit[]) => hs.map((h) => `  ${h.file}:${h.line}  ${h.field}`).join('\n');
+
+describe('no claim-bearing field carries a value from somewhere else', () => {
   it('nothing fabricates a value into a claim-bearing field', () => {
-    const bad = hits.filter((h) => FABRICATED.some((r) => r.test(h.expr)));
-    expect(bad, `fabricated values in claim-bearing fields:\n`
-      + bad.map((h) => `  ${h.file}:${h.line}  ${h.field} = ${h.expr}`).join('\n'))
-      .toEqual([]);
+    const bad = emitted.filter((h) => FABRICATED.some((r) => r.test(h.expr)));
+    expect(bad, `fabricated values in claim-bearing fields:\n${show(bad)}`).toEqual([]);
   });
 
-  // A check for `verified: true` as a literal was written here and removed. It
-  // flagged four sites, and three of them were correct: routes/challenge.ts and
-  // services/challenge.ts set it inside the success branch of a real Ed25519
-  // verification, and transparency.ts after a hash comparison matched. A literal
-  // `true` on the branch where the check passed is how an honest success is
-  // written. The pattern was cruder than the rule it was meant to enforce, so it
-  // is gone rather than carried as noise. The fourth, salesguard.ts:161, is a
-  // naming question and not a fabrication: `verified: true` there means a
-  // provenance row exists in our own table, which is not a verification. That
-  // belongs in the registry discussion below, not in a fabrication gate.
+  it('no chain-claiming name is computed in this process', () => {
+    const bad = chainBound.filter((h) => LOCALLY_COMPUTED.some((r) => r.test(h.expr)));
+    expect(bad, 'a transaction id is assigned by a network, so it cannot be '
+      + `computed here:\n${show(bad)}`).toEqual([]);
+  });
 
-  // The registry gate, armed in a follow-up. It currently names 21 fields whose
-  // provenance is not written down anywhere — anchorTx, anchor_tx, anchor_block,
-  // base_anchor, txHash, txCount, chain, chain_id, chainId, anchored,
-  // attested_at, verified_at, binding_verified, moltrustVerified, oracleVerified,
-  // verifiedWallets, proofHash, proofB64, by_source, kid, verify. Seeding
-  // REGISTRY from a guess would be the same mistake as the fabricated hash:
-  // writing a confident value where the work has not been done. The provenance
-  // of each is being traced; the entries land with that result, and this gate
-  // arms in the same change.
-  it('lists the claim-bearing fields whose provenance is not written down', () => {
-    const unknown = [...new Set(hits.map((h) => h.field))].filter((f) => !(f in REGISTRY));
-    // Asserted as a count, so the number cannot grow unnoticed before the gate arms.
-    expect(unknown.length, `unregistered claim-bearing fields: ${unknown.join(', ')}`)
+  // A check for a literal `verified: true` was written and removed. It flagged
+  // four sites and three were correct: routes/challenge.ts and
+  // services/challenge.ts set it inside the success branch of a real Ed25519
+  // verification, transparency.ts after a hash comparison matched. A literal
+  // true where the check passed is how an honest success is written, so the
+  // pattern was cruder than the rule. The fourth, salesguard.ts, is a naming
+  // question — `verified: true` there means a row exists in our own table.
+
+  it('caps the claim-bearing fields whose provenance is not written down', () => {
+    const unknown = [...new Set(emitted.map((h) => h.field))].filter((f) => !(f in REGISTRY));
+    // A cap, not a gate: these origins are being traced one at a time, and
+    // seeding REGISTRY from a guess would be the same mistake as the fabricated
+    // hash. The cap stops the number growing before the gate arms.
+    expect(unknown.length, `unregistered: ${unknown.sort().join(', ')}`)
       .toBeLessThanOrEqual(21);
   });
 
-  it('finds the defect it was written for, so the rule is not vacuous', () => {
-    // The exact line that stood in services/shopping.ts and services/travel.ts.
-    const line = '    onChainTx: `0x${Buffer.from(randomUUID()).toString(\'hex\').slice(0, 64)}`,';
-    const m = /^\s*([A-Za-z_$][\w$]*)\s*:\s*(.+?),\s*$/.exec(line);
-    expect(m).not.toBeNull();
-    expect(CLAIMS.some((r) => r.test(m![1]))).toBe(true);
-    expect(FABRICATED.some((r) => r.test(m![2]))).toBe(true);
+  // The four assignments this file was written for, as a fixture. Each one must
+  // be caught by name and by expression, or the rule passes by matching nothing.
+  const FIXTURE: Array<[string, string, 'fabricated' | 'computed']> = [
+    ['onChainTx', "`0x${Buffer.from(randomUUID()).toString('hex').slice(0, 64)}`", 'fabricated'],
+    ['anchorTx', "`0x${createHash('sha256').update(x).digest('hex').slice(0, 64)}`", 'computed'],
+    ['anchorTx', '`0x${proofHash.slice(0, 64)}`', 'computed'],
+    ['baseAnchor', "`0x${createHash('sha256').update(id).digest('hex')}`", 'computed'],
+  ];
+
+  it.each(FIXTURE)('catches %s (%s)', (field, expr, kind) => {
+    expect(CLAIMS.some((r) => r.test(field)) || CHAIN_CLAIMS.some((r) => r.test(field))).toBe(true);
+    if (kind === 'fabricated') {
+      expect(FABRICATED.some((r) => r.test(expr))).toBe(true);
+    } else {
+      expect(CHAIN_CLAIMS.some((r) => r.test(field))).toBe(true);
+      // harness.ts built its anchor by slicing an already-computed hash, so the
+      // expression names no hash function. That one is caught by the registry
+      // and by review, not by LOCALLY_COMPUTED — stated rather than implied.
+      if (/createHash|digest/.test(expr)) {
+        expect(LOCALLY_COMPUTED.some((r) => r.test(expr))).toBe(true);
+      }
+    }
   });
 
   it('does not flag a comment that describes the defect', () => {
-    const prose = '  // onChainTx: `0x${randomUUID()}` stood here and was removed';
-    expect(code(prose).trim()).toBe('');
+    expect(code('  // onChainTx: `0x${randomUUID()}` stood here').trim()).toBe('');
   });
 });

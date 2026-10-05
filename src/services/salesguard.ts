@@ -79,11 +79,12 @@ export async function registerProduct(
   };
 
   const credentialHash = `sha256:${createHash('sha256').update(JSON.stringify(credential)).digest('hex')}`;
-  const baseAnchor = `0x${createHash('sha256').update(productId + now.toISOString()).digest('hex').slice(0, 64)}`;
+  // `base_anchor` was sha256 over the product id and the current time, shaped
+  // like a Base transaction hash. Two of two live values were not on Base. The
+  // column stays and takes null until something actually anchors.
+  await createProduct(brand.id, productId, productName, credentialHash, null);
 
-  await createProduct(brand.id, productId, productName, credentialHash, baseAnchor);
-
-  return { credential, credential_hash: credentialHash, base_anchor: baseAnchor };
+  return { credential, credential_hash: credentialHash };
 }
 
 // ── Reseller Authorization (issues AuthorizedResellerCredential) ──
@@ -166,7 +167,6 @@ export async function verifyProduct(productId: string) {
       domain: product.brand_domain,
     },
     credential_hash: product.credential_hash,
-    base_anchor: product.base_anchor,
     registered_at: product.created_at,
     _meta: { service: 'moltguard', module: 'mt-salesguard' },
   };
