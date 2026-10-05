@@ -45,8 +45,15 @@ export interface CreateJWSOptions {
 export async function createJWS(payload: object, opts: CreateJWSOptions = {}): Promise<string> {
   const privateKey = await getSigningKey();
   if (!privateKey) {
-    // Fallback to placeholder if no key configured
-    return `UNSIGNED_${base64url(JSON.stringify(payload))}`;
+    // This used to return `UNSIGNED_${base64url(payload)}` as the jws. The
+    // credential then went out with `proof.type: 'JsonWebSignature2020'` and a
+    // `verificationMethod` pointing at our did:web key, both claiming a
+    // signature that did not exist. The `UNSIGNED_` prefix named it inside the
+    // field; the two neighbouring fields contradicted it, and nothing on a
+    // verifier's side is obliged to read the prefix before trusting the type.
+    // Without a key there is no credential to issue.
+    throw new Error('MoltGuard signing key is not configured; refusing to issue '
+                  + 'a credential whose proof would claim a signature it has not got');
   }
 
   // JWS header: Ed25519 with key reference

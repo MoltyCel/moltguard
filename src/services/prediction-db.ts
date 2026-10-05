@@ -51,15 +51,18 @@ export async function getWallet(address: string): Promise<PredictionWallet | nul
 
 export async function updateWalletStats(
   address: string,
-  stats: { totalBets: number; wins: number; losses: number; totalVolume: number; netPnl: number },
+  // wins/losses are no longer written: nothing computes them honestly. The two
+  // columns still hold the quota-derived values written before 2026-10-05 and
+  // need a migration to null them; nothing in this service reads them now.
+  stats: { totalBets: number; totalVolume: number; netPnl: number },
   scoreResult: ScoreResult
 ): Promise<void> {
   await query(
     `UPDATE prediction_wallets SET
-       total_bets = $2, wins = $3, losses = $4, total_volume = $5::numeric, net_pnl = $6::numeric,
-       prediction_score = $7, score_breakdown = $8::jsonb, last_synced = NOW(), updated_at = NOW()
+       total_bets = $2, total_volume = $3::numeric, net_pnl = $4::numeric,
+       prediction_score = $5, score_breakdown = $6::jsonb, last_synced = NOW(), updated_at = NOW()
      WHERE address = $1`,
-    [address.toLowerCase(), stats.totalBets, stats.wins, stats.losses, stats.totalVolume, stats.netPnl,
+    [address.toLowerCase(), stats.totalBets, stats.totalVolume, stats.netPnl,
      scoreResult.score, JSON.stringify(scoreResult.breakdown)]
   );
 }
