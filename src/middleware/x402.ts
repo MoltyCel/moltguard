@@ -186,6 +186,11 @@ export function createX402Middleware(): MiddlewareHandler {
         path,
         amount: Math.round(price * 1_000_000),
         reason: gate.reason,
+        // The sentence behind the reason. Without it every verification
+        // failure reads as `attestation_invalid` and the row cannot say
+        // whether the token was malformed, signed by an unknown key, or a
+        // governance payload presented at a gate that does not accept one.
+        detail: gate.detail,
         via: gate.allowed ? (gate.via ?? 'score') : null,
       });
     }
