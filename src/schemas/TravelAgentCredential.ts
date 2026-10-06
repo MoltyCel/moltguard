@@ -103,5 +103,4 @@ export interface BookingReceipt {
   result: 'approved' | 'rejected' | 'review';
   reason?: string;
   timestamp: string;
-  onChainTx?: string;
 }

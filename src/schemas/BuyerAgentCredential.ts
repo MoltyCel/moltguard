@@ -8,6 +8,7 @@ export const BuyerAgentCredentialSchema = {
   credentialSubject: {
     id: 'did:base:<agent-did>',
     humanDID: 'did:base:<human-did>',
+    humanDIDVerification: { verified: false, method: null, note: '<why>' },
     authorization: {
       spendLimit: 300,
       currency: 'USDC',
@@ -26,6 +27,33 @@ export const BuyerAgentCredentialSchema = {
 
 export type TrustLevel = 'basic' | 'verified' | 'premium';
 
+/**
+ * What is known about `humanDID`, carried next to it.
+ *
+ * `humanDID` is whatever the caller put in the request body. `requireHolderBinding`
+ * proves the caller holds the key for the AGENT; no signature from the human is
+ * presented, and none is asked for. So the credential names a spending mandate
+ * that the named human never signed.
+ *
+ * Marking it is the honest minimum: a reader of the credential or the receipt can
+ * see that the human side is a claim. When a human signature becomes part of
+ * issuance, the result goes here — `verified: true` and the method that
+ * established it — and the shape does not change for anyone already reading it.
+ */
+export interface HumanDIDVerification {
+  verified: boolean;
+  /** How it was established. `null` while nothing establishes it. */
+  method: string | null;
+  note: string;
+}
+
+export const UNVERIFIED_HUMAN: HumanDIDVerification = {
+  verified: false,
+  method: null,
+  note: 'humanDID is asserted by the caller; no signature from the human was '
+      + 'presented or required at issuance',
+};
+
 export interface BuyerAgentAuthorization {
   spendLimit: number;
   currency: string;
@@ -41,6 +69,7 @@ export interface BuyerAgentAuthorization {
 export interface BuyerAgentCredentialSubject {
   id: string;
   humanDID: string;
+  humanDIDVerification: HumanDIDVerification;
   authorization: BuyerAgentAuthorization;
   trustLevel: TrustLevel;
   issuedBy: string;
@@ -66,6 +95,7 @@ export interface VerificationReceipt {
   receiptId: string;
   agentDID: string;
   humanDID: string;
+  humanDIDVerification: HumanDIDVerification;
   merchant: string;
   amount: number;
   currency: string;
@@ -73,5 +103,4 @@ export interface VerificationReceipt {
   result: 'approved' | 'rejected' | 'review';
   reason?: string;
   timestamp: string;
-  onChainTx?: string;
 }

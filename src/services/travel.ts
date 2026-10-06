@@ -210,7 +210,9 @@ export async function verifyTravelTransaction(req: TravelVerifyRequest): Promise
     guardScore,
     result: 'approved',
     timestamp: now.toISOString(),
-    onChainTx: `0x${Buffer.from(randomUUID()).toString('hex').slice(0, 64)}`,
+    // `onChainTx` stood here, built from a random UUID, exactly as in
+    // services/shopping.ts. Nothing was anchored. Removed from the type as
+    // well, so it cannot return as a placeholder.
   };
 
   // Store receipt and index by tripId
