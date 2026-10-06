@@ -60,16 +60,40 @@ export interface GateDecisionRow {
   /** USDC base units the caller was quoted. */
   amount: number | null;
   reason: string;
+  /**
+   * The verifier's own sentence behind `reason`. `reason` collapses malformed,
+   * wrong algorithm, unknown kid, bad signature, wrong version and expired into
+   * the one value `attestation_invalid`, so without this the row cannot say
+   * which of them happened — and a governance-shaped payload, which the gate
+   * names exactly, can only be counted inside the lump.
+   */
+  detail?: string | null;
   via?: "score" | "track_record" | null;
+}
+
+/**
+ * Hard cap, not a formatting nicety. Two values inside these messages come
+ * from the caller -- `payload.v` and `payload.valid_until` are interpolated by
+ * moltrust-gate.ts:187 and :197 -- so the length of what lands in the column
+ * is the caller's to choose unless we bound it here.
+ */
+const DETAIL_MAX = 200;
+
+export function detailFor(row: GateDecisionRow): string | null {
+  const d = row.detail;
+  if (typeof d !== "string") return null;
+  const t = d.trim();
+  if (!t) return null;                      // allows carry detail: ''
+  return t.length > DETAIL_MAX ? `${t.slice(0, DETAIL_MAX - 1)}…` : t;
 }
 
 /** Record one decision. Never throws, never awaited. */
 export function recordGateDecision(row: GateDecisionRow): void {
   pruneOccasionally();
   query(
-    `INSERT INTO gate_decisions (did, path, amount, reason, via)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [row.did ?? null, row.path, row.amount, row.reason, row.via ?? null],
+    `INSERT INTO gate_decisions (did, path, amount, reason, via, detail)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [row.did ?? null, row.path, row.amount, row.reason, row.via ?? null, detailFor(row)],
   )
     .then(() => { gateLogStats.written += 1; })
     .catch(complain);
