@@ -949,7 +949,9 @@ export async function issueVerifiedSkillVC(params: {
     exp: Math.floor(expiry.getTime() / 1000),
     vc: credentialSubject,
     type: 'VerifiedSkillCredential',
-  });
+  }, { route: 'POST /vc/skill/issue', subjectDid: params.authorDID,
+       scopes: ['VerifiedSkillCredential'], validFrom: now, validUntil: expiry,
+       callerIp: null });
 
   const vc: VerifiedSkillCredential = {
     '@context': [

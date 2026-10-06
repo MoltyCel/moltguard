@@ -232,7 +232,14 @@ vcPredictionRoute.post("/issue", async (c) => {
   };
 
   try {
-    const jws = await createJWS(credential);
+    const jws = await createJWS(credential, {
+      route: 'POST /vc/prediction/issue',
+      subjectDid: credential.credentialSubject?.id ?? wallet.linked_did ?? did,
+      scopes: ['PredictionTrackCredential'],
+      validFrom: new Date(credential.issuanceDate),
+      validUntil: credential.expirationDate ? new Date(credential.expirationDate) : null,
+      callerIp: c.req.header('x-forwarded-for') ?? null,
+    });
     return c.json({ credential, jws });
   } catch (err: any) {
     return c.json({ error: "VC signing failed", message: err.message }, 500);

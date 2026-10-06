@@ -77,8 +77,14 @@ interface Signature { algorithm: string; verificationMethod: string; value: stri
 //         Do NOT mint a #moltradar-key-1 — absent from the DID doc/JWKS, would not verify.
 // `value` is therefore a JWS compact string (header.payload.signature) that self-contains the
 // signed `payload`; verify with the suite verifyJWS() / the published JWKS.
-async function signPayload(payload: unknown): Promise<Signature> {
-  const value = await createJWS(payload as object)
+async function signPayload(payload: unknown, subject: string, callerIp: string | null): Promise<Signature> {
+  // MoltRadar signs an operator view of one market, not a grant to anyone. The
+  // subject is the market, scopes are empty, and there is no expiry on the
+  // artefact — the register carries that as null rather than inventing one.
+  const value = await createJWS(payload as object, {
+    route: 'GET /radar/market/:id', subjectDid: `polymarket:${subject}`,
+    scopes: [], validFrom: new Date(), validUntil: null, callerIp,
+  })
   return { algorithm: 'EdDSA', verificationMethod: 'did:web:moltrust.ch#moltguard-key-1', value }
 }
 
@@ -120,7 +126,7 @@ routes.get('/clusters', async (c: Context) => {
 
   const signed = { generated: store.generated, count: markets.length, markets }
   return c.json({ service: 'moltradar', feed: 'operator-clusters', ...signed,
-    _meta: meta('free'), signature: await signPayload(signed) })
+    _meta: meta('free'), signature: await signPayload(signed, 'operator-clusters-feed', c.req.header('x-forwarded-for') ?? null) })
 })
 
 // GET /radar/market/:id  (PAID $0.05 via X402_PRICES '/radar/market') — full operator decomposition

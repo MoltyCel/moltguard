@@ -57,7 +57,9 @@ export async function registerProduct(
     exp: Math.floor(expiry.getTime() / 1000),
     vc: credentialSubject,
     type: 'ProductProvenanceCredential',
-  });
+  }, { route: 'POST /salesguard/product/register', subjectDid: brand.did,
+       scopes: ['ProductProvenanceCredential'], validFrom: now, validUntil: expiry,
+       callerIp: null });
 
   const credential: ProductProvenanceCredential = {
     '@context': [
@@ -113,7 +115,9 @@ export async function authorizeReseller(
     exp: Math.floor(expiry.getTime() / 1000),
     vc: credentialSubject,
     type: 'AuthorizedResellerCredential',
-  });
+  }, { route: 'POST /salesguard/reseller/authorize', subjectDid: resellerDid,
+       scopes: ['AuthorizedResellerCredential'], validFrom: now, validUntil: expiry,
+       callerIp: null });
 
   const credential: AuthorizedResellerCredential = {
     '@context': [
