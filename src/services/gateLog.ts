@@ -74,10 +74,15 @@ export interface GateDecisionRow {
 /**
  * Hard cap, not a formatting nicety. Two values inside these messages come
  * from the caller -- `payload.v` and `payload.valid_until` are interpolated by
- * moltrust-gate.ts:187 and :197 -- so the length of what lands in the column
- * is the caller's to choose unless we bound it here.
+ * moltrust-gate.ts -- so the length of what lands in the column is the
+ * caller's to choose unless we bound it here.
+ *
+ * 400 rather than 200 since 2026-10-06: the proof failure now names the
+ * binding recipe and both candidate paths, and at 200 the truncation ate the
+ * paths, which are the only part a caller can act on. A wallet path alone is
+ * 59 characters.
  */
-const DETAIL_MAX = 200;
+const DETAIL_MAX = 400;
 
 export function detailFor(row: GateDecisionRow): string | null {
   const d = row.detail;

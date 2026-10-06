@@ -33,13 +33,13 @@ describe('detailFor', () => {
 
   it('caps caller-controlled length and marks the cut', () => {
     const out = detailFor(row('x'.repeat(5000)))!;
-    expect(out).toHaveLength(200);
+    expect(out).toHaveLength(400);
     expect(out.endsWith('…')).toBe(true);
   });
 
   it('does not cap or mark a message that fits', () => {
-    const out = detailFor(row('y'.repeat(200)))!;
-    expect(out).toHaveLength(200);
+    const out = detailFor(row('y'.repeat(400)))!;
+    expect(out).toHaveLength(400);
     expect(out.endsWith('…')).toBe(false);
   });
 
