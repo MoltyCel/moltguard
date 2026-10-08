@@ -1,6 +1,6 @@
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import { query } from '../services/db.js';
-import { X402_PRICES, X402_FREE_PATHS, matchPriceKey } from './x402-prices.js';
+import { X402_PRICES, X402_FREE_PATHS, matchPriceKey, normalizePath, isUnderPricedPrefix } from './x402-prices.js';
 import { verifyPayment } from '../services/x402-verify.js';
 import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
 import { buildExtensions } from '../services/x402-bazaar.js';
@@ -145,16 +145,46 @@ export function createX402Middleware(): MiddlewareHandler {
   const discountGate = buildDiscountGate();
 
   return async (c: Context, next: Next) => {
-    const url = new URL(c.req.url);
-    const path = url.pathname;
     const method = c.req.method;
+
+    // The router matches a decoded path; the price table was consulted with the
+    // raw one. The two agree until a caller writes a character as %XX, and then
+    // the handler for /api/agent/score runs while the table is asked about
+    // /api/%61gent/score, finds nothing, and the request leaves through the
+    // `no price = free` branch below. Decode once, here, and price the same
+    // path the route was chosen by.
+    let path: string;
+    try {
+      path = normalizePath(new URL(c.req.url).pathname);
+    } catch {
+      // An escape that does not decode cannot be priced, and guessing at what
+      // the caller meant is how the mismatch started.
+      return c.json({ error: 'Bad Request', detail: 'malformed percent-encoding in path' }, 400);
+    }
 
     // Free endpoints: always pass through
     if (isFree(path)) return next();
 
     // Determine price for this endpoint
     const listPrice = getPrice(method, path);
-    if (listPrice === null) return next(); // no price defined = free
+    if (listPrice === null) {
+      // An absent price used to mean free everywhere in the service. Under a
+      // priced prefix that is the wrong default: a path the table does not
+      // recognise is the case this middleware exists for, and the caller is
+      // standing in a part of the tree that costs money. Outside those
+      // prefixes nothing is for sale and free stays free.
+      //
+      // OPTIONS is exempt: the CORS preflight carries no payment header by
+      // definition and answering it with 402 breaks browser clients.
+      if (method !== 'OPTIONS' && isUnderPricedPrefix(path)) {
+        return c.json({
+          error: 'Payment Required',
+          detail: 'no price is published for this path — use a documented endpoint',
+          documentation: 'https://api.moltrust.ch/.well-known/x402.json',
+        }, 402);
+      }
+      return next();
+    }
 
     // The MolTrust discount. Evaluated before anything is quoted, so the 402
     // challenge advertises the price this caller will actually be charged —
