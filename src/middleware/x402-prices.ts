@@ -37,6 +37,40 @@ export const X402_PRICES: Record<string, number> = {
  * startsWith matched the free routes against their paid prefixes — so there is
  * one matcher and both callers read it.
  */
+/**
+ * The one path spelling everything here is keyed by.
+ *
+ * `decodeURIComponent` throws on a malformed escape; the caller turns that into
+ * a 400 rather than pricing a path it could not read. Decoding happens exactly
+ * once — a second pass would let %2561 arrive as %61 and then as `a`, which is
+ * the same mismatch one layer further in.
+ *
+ * Duplicate slashes collapse and a trailing slash is dropped, because
+ * /api/agent/score/ and //api/agent/score reach the same handler and must
+ * reach the same price.
+ */
+export function normalizePath(rawPathname: string): string {
+  const decoded = decodeURIComponent(rawPathname);
+  const collapsed = decoded.replace(/\/{2,}/g, '/');
+  return collapsed.length > 1 ? collapsed.replace(/\/+$/, '') : collapsed;
+}
+
+/** Every path prefix that carries a price, in any method. */
+export const PRICED_PREFIXES: readonly string[] = Array.from(
+  new Set(Object.keys(X402_PRICES).map((k) => k.split(' ')[1])),
+);
+
+/**
+ * Is this path inside a part of the tree that is for sale?
+ *
+ * Used for the deny-by-default branch: under a priced prefix, a path with no
+ * price entry is refused instead of served. Free paths are checked before this
+ * is ever called, so /api/agent/score-free does not reach it.
+ */
+export function isUnderPricedPrefix(path: string): boolean {
+  return PRICED_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
+}
+
 export function matchPriceKey(method: string, path: string): string | null {
   const exact = `${method} ${path}`;
   if (X402_PRICES[exact] !== undefined) return exact;
