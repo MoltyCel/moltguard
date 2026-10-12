@@ -15,10 +15,11 @@
 // could not finish is exit 2 as well — a verdict from a partial catalogue is
 // the same false confidence in a different disguise.
 
+import { pathToFileURL } from 'node:url';
 import { CONFIG } from '../config.js';
+import { paymentAddress } from '../paymentAddress.js';
 import { isCdpEndpoint, mintCdpBearer } from '../services/cdp-auth.js';
 
-const PAY_TO = process.env.MOLTGUARD_WALLET ?? '0xD63f988201A0Bd184deaB7D4e97b1717B25a5800';
 
 function authHeaders(method: string, url: string): Record<string, string> {
   if (CONFIG.facilitatorAuthHeader) return { Authorization: CONFIG.facilitatorAuthHeader };
@@ -90,7 +91,7 @@ export function isOurs(r: any): boolean {
 
 async function main(): Promise<number> {
   const argPayTo = process.argv.indexOf('--payTo');
-  const payTo = argPayTo > -1 ? process.argv[argPayTo + 1] : PAY_TO;
+  const payTo = argPayTo > -1 ? process.argv[argPayTo + 1] : paymentAddress();
   const base = CONFIG.facilitatorUrl.replace(/\/$/, '');
 
   // The spec gives /discovery/resources a payTo filter. CDP accepts it and
@@ -154,7 +155,11 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().then((code) => process.exit(code)).catch((err) => {
-  console.log(`UNGEPRUEFT — ${err?.message ?? err}`);
-  process.exit(2);
-});
+// Only when run as a program. The test imports isOurs/resourceUrl from here, and
+// an import used to start a live catalogue scan and end the test process.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().then((code) => process.exit(code)).catch((err) => {
+    console.log(`UNGEPRUEFT — ${err?.message ?? err}`);
+    process.exit(2);
+  });
+}

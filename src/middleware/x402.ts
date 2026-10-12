@@ -6,6 +6,7 @@ import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-au
 import { buildExtensions } from '../services/x402-bazaar.js';
 import { gateFor, type Decision } from './moltrust-gate.js';
 import { recordGateDecision } from '../services/gateLog.js';
+import { paymentAddress } from '../paymentAddress.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -20,7 +21,6 @@ export function isCredentialIssuance(path: string): boolean {
   return CREDENTIAL_ISSUANCE.some((p) => path === p || path.startsWith(p + '/'));
 }
 
-const MOLTRUST_WALLET = process.env.MOLTGUARD_WALLET ?? '0xD63f988201A0Bd184deaB7D4e97b1717B25a5800';
 const BASE_CHAIN_ID = 8453;
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
@@ -242,7 +242,7 @@ export function createX402Middleware(): MiddlewareHandler {
 
     let failure: { reason: string; detail: string } | null = null;
     if (paymentHeader) {
-      const outcome = await verifyPayment(paymentHeader, price, path, MOLTRUST_WALLET, method);
+      const outcome = await verifyPayment(paymentHeader, price, path, paymentAddress(), method);
       if (outcome.ok) {
         c.set('x402_protocol_version', protocolVersion);
         c.set('x402_tx_hash', outcome.txHash);
@@ -265,7 +265,7 @@ export function createX402Middleware(): MiddlewareHandler {
       // Same function the settle call uses. Written out separately, the
       // challenge and the settlement terms drift, and the facilitator then
       // rejects a payment for an obligation we never advertised.
-      accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, MOLTRUST_WALLET)],
+      accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, paymentAddress())],
       // Discovery. The catalogue entry is written at settlement, not here,
       // but a facilitator only catalogues what the challenge advertised —
       // omit this and the endpoint stays unfindable however often it is
