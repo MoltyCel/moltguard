@@ -20,7 +20,7 @@ export function isCredentialIssuance(path: string): boolean {
   return CREDENTIAL_ISSUANCE.some((p) => path === p || path.startsWith(p + '/'));
 }
 
-const MOLTRUST_WALLET = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4da1F1A045A271D5838F5';
+const MOLTRUST_WALLET = process.env.MOLTGUARD_WALLET ?? '0xD63f988201A0Bd184deaB7D4e97b1717B25a5800';
 const BASE_CHAIN_ID = 8453;
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const X402_ENABLED = process.env.X402_ENABLED === 'true';

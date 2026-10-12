@@ -52,7 +52,7 @@ app.get('/moltrust/gate-stats', (c) =>
 );
 
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
-const MOLTGUARD_WALLET = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4da1F1A045A271D5838F5';
+const MOLTGUARD_WALLET = process.env.MOLTGUARD_WALLET ?? '0xD63f988201A0Bd184deaB7D4e97b1717B25a5800';
 
 app.get('/api/info', (c) => {
   const info: ApiInfo = {
