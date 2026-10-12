@@ -18,7 +18,7 @@
 import { CONFIG } from '../config.js';
 import { isCdpEndpoint, mintCdpBearer } from '../services/cdp-auth.js';
 
-const PAY_TO = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4da1F1A045A271D5838F5';
+const PAY_TO = process.env.MOLTGUARD_WALLET ?? '0xD63f988201A0Bd184deaB7D4e97b1717B25a5800';
 
 function authHeaders(method: string, url: string): Record<string, string> {
   if (CONFIG.facilitatorAuthHeader) return { Authorization: CONFIG.facilitatorAuthHeader };
