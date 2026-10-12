@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG } from '../config.js';
+import { paymentAddress } from '../paymentAddress.js';
 import { gateLogStats } from '../services/gateLog.js';
 import { gateStats } from '../middleware/x402.js';
 import type { ApiInfo } from '../types/index.js';
@@ -52,7 +53,6 @@ app.get('/moltrust/gate-stats', (c) =>
 );
 
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
-const MOLTGUARD_WALLET = process.env.MOLTGUARD_WALLET ?? '0xD63f988201A0Bd184deaB7D4e97b1717B25a5800';
 
 app.get('/api/info', (c) => {
   const info: ApiInfo = {
@@ -64,7 +64,7 @@ app.get('/api/info', (c) => {
     ...(X402_ENABLED
       ? {
           payment: {
-            wallet: MOLTGUARD_WALLET,
+            wallet: paymentAddress(),
             network: 'base',
             chain_id: 8453,
             token: 'USDC',

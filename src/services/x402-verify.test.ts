@@ -302,7 +302,7 @@ describe('payment_events bookkeeping', () => {
 const PAYER = '0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38';
 const SETTLED_TX = '0x' + 'cd'.repeat(32);
 
-// CONFIG.network follows MOLTGUARD_WALLET: mainnet when it is set, Base Sepolia
+// CONFIG.network follows BASE_ADDR: mainnet when it is configured, Base Sepolia
 // when it is not. CI has no wallet, so hardcoding eip155:8453 made every case
 // below fail on wrong_network there while passing on a configured host. The
 // network under test is read from the same place the code reads it.
