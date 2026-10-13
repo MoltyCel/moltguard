@@ -13,32 +13,15 @@
 // takes effect on the next request, without a commit and without a rebuild.
 // No fallback literal.
 
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { secretsFileValue } from './secretsFile.js';
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 export class PaymentAddressNotConfigured extends Error {}
 
-function secretsFile(): string {
-  return process.env.MOLTRUST_SECRETS_FILE || join(homedir(), '.moltrust_secrets');
-}
-
 /** The BASE_ADDR line of the secrets file, or null when the file or line is absent. */
-export function baseAddrFromSecretsFile(path: string = secretsFile()): string | null {
-  let text: string;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch {
-    return null;
-  }
-  let value: string | null = null;
-  for (const raw of text.split('\n')) {
-    const m = /^\s*(?:export\s+)?BASE_ADDR=(.*)$/.exec(raw);
-    if (m) value = m[1].replace(/["'\s]/g, '');
-  }
-  return value;
+export function baseAddrFromSecretsFile(path?: string): string | null {
+  return secretsFileValue('BASE_ADDR', path);
 }
 
 /** Null when BASE_ADDR is set nowhere — the caller decides what that means. */

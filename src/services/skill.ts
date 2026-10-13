@@ -5,6 +5,9 @@ import { createHash } from 'node:crypto';
 import { createJWS } from './credential.js';
 import { resolveAAE } from '../lib/aae.js';
 import { query } from './db.js';
+import { CONFIG } from '../config.js';
+import { envOrSecretsFile } from '../secretsFile.js';
+import { childEnv } from '../childEnv.js';
 import { createHash as cryptoHash } from 'node:crypto';
 import type {
   AuditFinding,
@@ -787,7 +790,7 @@ async function runMcpScan(
 
   let available = false;
   try {
-    await execAsync('which uvx', { timeout: 2000 });
+    await execAsync('which uvx', { timeout: 2000, env: childEnv() });
     available = true;
   } catch {
     return { ran: false, available: false, findings_count: 0 };
@@ -805,7 +808,7 @@ async function runMcpScan(
   // scope for static SKILL.md audit.
   let findingsBefore = findingsOut.length;
   try {
-    const { stdout, stderr } = await execAsync('uvx mcp-scan --version', { timeout: 5000 });
+    const { stdout, stderr } = await execAsync('uvx mcp-scan --version', { timeout: 5000, env: childEnv() });
     if (stdout.trim() || stderr.trim()) {
       // mcp-scan is reachable but has no SKILL.md scan mode yet — record as informational
       findingsOut.push({
@@ -978,42 +981,71 @@ export async function issueVerifiedSkillVC(params: {
 }
 
 // ── On-chain anchoring (Base L2) ──
+//
+// Signed in this process with viem. Until 2026-10-12 this ran
+// Foundry's cast as a child process with the key as an argument: it stood in the
+// argument list, readable in `ps` and /proc/<pid>/cmdline by any process of the
+// same user for as long as cast ran (ops backlog S4). The transaction itself is
+// unchanged: zero value to the zero address, calldata
+// "MolTrust/SkillVC/1 SHA256:<hash>" in UTF-8.
+
+export const ANCHOR_TO = '0x0000000000000000000000000000000000000000' as const;
+
+export function anchorCalldata(skillHash: string): `0x${string}` {
+  const message = 'MolTrust/SkillVC/1 SHA256:' + skillHash.replace('sha256:', '');
+  return ('0x' + Buffer.from(message, 'utf8').toString('hex')) as `0x${string}`;
+}
+
+/** Sends one anchor transaction and waits for its receipt. Replaceable in tests. */
+export type AnchorSender = (data: `0x${string}`, key: `0x${string}`) =>
+  Promise<{ tx: string; block: string }>;
+
+const viemSender: AnchorSender = async (data, key) => {
+  const { createWalletClient, createPublicClient, http } = await import('viem');
+  const { privateKeyToAccount } = await import('viem/accounts');
+  const { base, baseSepolia } = await import('viem/chains');
+  const chain = CONFIG.isTestnet ? baseSepolia : base;
+  const transport = http(CONFIG.baseRpcUrl);
+  const wallet = createWalletClient({ account: privateKeyToAccount(key), chain, transport });
+  const hash = await wallet.sendTransaction({ to: ANCHOR_TO, value: 0n, data });
+  const receipt = await createPublicClient({ chain, transport })
+    .waitForTransactionReceipt({ hash, timeout: 30_000 });
+  return { tx: hash, block: receipt.blockNumber.toString() };
+};
+
+let anchorSender: AnchorSender = viemSender;
+
+/** Test seam: swap the sender, get the previous one back. */
+export function setAnchorSender(next: AnchorSender): AnchorSender {
+  const prev = anchorSender;
+  anchorSender = next;
+  return prev;
+}
+
+function writeKey(): `0x${string}` | null {
+  const raw = envOrSecretsFile('BASE_WRITE_KEY');
+  if (!raw) return null;
+  const k = raw.startsWith('0x') ? raw : '0x' + raw;
+  return /^0x[0-9a-fA-F]{64}$/.test(k) ? (k as `0x${string}`) : null;
+}
 
 export async function anchorSkillVC(skillHash: string): Promise<{tx: string; block: string} | null> {
-  const BASE_KEY = process.env.BASE_WRITE_KEY;
-  if (!BASE_KEY) {
-    console.warn('BASE_WRITE_KEY not set — skipping on-chain anchor');
+  const key = writeKey();
+  if (!key) {
+    console.warn('BASE_WRITE_KEY not set or malformed — skipping on-chain anchor');
     return null;
   }
   try {
-    const { exec } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execAsync = promisify(exec);
-
-    const cleanHash = skillHash.replace('sha256:', '');
-    const message = 'MolTrust/SkillVC/1 SHA256:' + cleanHash;
-    const hexData = Buffer.from(message, 'utf8').toString('hex');
-
-    const cmd = '/home/moltstack/.foundry/bin/cast send --rpc-url https://mainnet.base.org --private-key ' + BASE_KEY + ' 0x0000000000000000000000000000000000000000 --value 0 -- 0x' + hexData + ' 2>&1';
-    const { stdout } = await execAsync(cmd, { timeout: 30000 });
-
-    const txMatch = stdout.match(/transactionHash\s+(0x[0-9a-fA-F]+)/);
-    const blockMatch = stdout.match(/blockNumber\s+(\d+)/);
-
-    if (txMatch && blockMatch) {
-      const tx = txMatch[1];
-      const block = blockMatch[1];
-      await query(
-        'UPDATE skill_credentials SET anchor_tx = $1, anchor_block = $2 WHERE skill_hash = $3',
-        [tx, block, skillHash]
-      );
-      console.log('Skill VC anchored: ' + tx + ' block ' + block);
-      return { tx, block };
-    }
-    console.warn('Anchor TX sent but could not parse response');
-    return null;
+    const { tx, block } = await anchorSender(anchorCalldata(skillHash), key);
+    await query(
+      'UPDATE skill_credentials SET anchor_tx = $1, anchor_block = $2 WHERE skill_hash = $3',
+      [tx, block, skillHash]
+    );
+    console.log('Skill VC anchored: ' + tx + ' block ' + block);
+    return { tx, block };
   } catch (e: any) {
-    console.error('On-chain anchor failed:', e.message);
+    // The message, never the error object: viem errors can carry request details.
+    console.error('On-chain anchor failed:', String(e?.shortMessage ?? e?.message ?? e).slice(0, 200));
     return null;
   }
 }
