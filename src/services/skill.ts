@@ -7,6 +7,7 @@ import { resolveAAE } from '../lib/aae.js';
 import { query } from './db.js';
 import { CONFIG } from '../config.js';
 import { envOrSecretsFile } from '../secretsFile.js';
+import { childEnv } from '../childEnv.js';
 import { createHash as cryptoHash } from 'node:crypto';
 import type {
   AuditFinding,
@@ -789,7 +790,7 @@ async function runMcpScan(
 
   let available = false;
   try {
-    await execAsync('which uvx', { timeout: 2000 });
+    await execAsync('which uvx', { timeout: 2000, env: childEnv() });
     available = true;
   } catch {
     return { ran: false, available: false, findings_count: 0 };
@@ -807,7 +808,7 @@ async function runMcpScan(
   // scope for static SKILL.md audit.
   let findingsBefore = findingsOut.length;
   try {
-    const { stdout, stderr } = await execAsync('uvx mcp-scan --version', { timeout: 5000 });
+    const { stdout, stderr } = await execAsync('uvx mcp-scan --version', { timeout: 5000, env: childEnv() });
     if (stdout.trim() || stderr.trim()) {
       // mcp-scan is reachable but has no SKILL.md scan mode yet — record as informational
       findingsOut.push({
