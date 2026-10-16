@@ -37,3 +37,4 @@ field, never a lost row.
 | File | Applied | What |
 |---|---|---|
 | `2026-09-15_payment_events_path.sql` | 2026-09-15 | `payment_events.path` — which rail settled a payment (`transfer` or `eip3009`) |
+| `2026-10-16_gate_decisions_invited.sql` | 2026-10-16 | `gate_decisions.invited` — the 402 carried a registration invite (G3) |

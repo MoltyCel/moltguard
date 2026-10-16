@@ -44,6 +44,7 @@ app.get('/moltrust/gate-stats', (c) =>
     discounted_share: gateStats.share,
     discounted_by_path: gateStats.discountedVia,
     denied_by_reason: gateStats.denied,
+    invited_402s: gateStats.invited,
     since_process_start: true,
     // The per-decision log is the durable half. A zero here next to a non-zero
     // priced_requests means the log is broken, which is worth seeing.
@@ -57,7 +58,7 @@ const X402_ENABLED = process.env.X402_ENABLED === 'true';
 app.get('/api/info', (c) => {
   const info: ApiInfo = {
     service: 'MoltGuard',
-    version: '1.5.0',
+    version: '1.6.0',
     description: 'All-in-One Trust & Integrity Service for the x402 Agent Economy',
     network: CONFIG.network,
     x402_enabled: X402_ENABLED,

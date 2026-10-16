@@ -12,7 +12,7 @@ export const spec: OpenAPIV3_1.Document = {
   openapi: '3.1.0',
   info: {
     title: 'MoltGuard',
-    version: '1.5.0',
+    version: '1.6.0',
     description:
       'Trust & Integrity Service for the x402 Agent Economy. ' +
       'Sub-API of MolTrust Trust Registry (api.moltrust.ch). ' +
@@ -59,7 +59,7 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'Self-documentation of MoltGuard service capabilities + pricing.',
         properties: {
           service: { type: 'string', enum: ['MoltGuard'] },
-          version: { type: 'string', example: '1.5.0' },
+          version: { type: 'string', example: '1.6.0' },
           description: { type: 'string' },
           network: { type: 'string', example: 'eip155:8453' },
           x402_enabled: { type: 'boolean' },

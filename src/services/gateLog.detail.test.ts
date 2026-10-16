@@ -66,7 +66,8 @@ describe('recordGateDecision', () => {
     recordGateDecision({ ...row('expired at 2026-10-05T00:00:00Z'), via: null });
     const call = (query as any).mock.calls.at(-1);
     expect(call[0]).toContain('detail');
-    expect(call[1]).toHaveLength(6);
+    // The seventh is `invited` (gateLog.invited.test.ts).
+    expect(call[1]).toHaveLength(7);
     expect(call[1][5]).toBe('expired at 2026-10-05T00:00:00Z');
   });
 
