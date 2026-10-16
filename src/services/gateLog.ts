@@ -69,6 +69,8 @@ export interface GateDecisionRow {
    */
   detail?: string | null;
   via?: "score" | "track_record" | null;
+  /** The 402 that answered this request carried a registration invite. */
+  invited?: boolean;
 }
 
 /**
@@ -92,14 +94,41 @@ export function detailFor(row: GateDecisionRow): string | null {
   return t.length > DETAIL_MAX ? `${t.slice(0, DETAIL_MAX - 1)}…` : t;
 }
 
-/** Record one decision. Never throws, never awaited. */
-export function recordGateDecision(row: GateDecisionRow): void {
-  pruneOccasionally();
-  query(
+/**
+ * Whether gate_decisions has the `invited` column. Unknown until the first
+ * insert says otherwise; migrations/2026-10-16_gate_decisions_invited.sql adds
+ * it. Without the column the row is written in the older shape, because losing
+ * the decision over a reporting field is the worse outcome.
+ */
+let hasInvited: boolean | null = null;
+
+function insertBase(row: GateDecisionRow) {
+  return query(
     `INSERT INTO gate_decisions (did, path, amount, reason, via, detail)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [row.did ?? null, row.path, row.amount, row.reason, row.via ?? null, detailFor(row)],
+  );
+}
+
+/** Record one decision. Never throws, never awaited. */
+export function recordGateDecision(row: GateDecisionRow): void {
+  pruneOccasionally();
+  const written = () => { gateLogStats.written += 1; };
+  if (hasInvited === false) {
+    insertBase(row).then(written).catch(complain);
+    return;
+  }
+  query(
+    `INSERT INTO gate_decisions (did, path, amount, reason, via, detail, invited)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [row.did ?? null, row.path, row.amount, row.reason, row.via ?? null, detailFor(row),
+      row.invited === true],
   )
-    .then(() => { gateLogStats.written += 1; })
-    .catch(complain);
+    .then(() => { hasInvited = true; written(); })
+    .catch((err) => {
+      if (err?.code !== "42703") return complain(err);
+      hasInvited = false;
+      console.warn("[gate-log] gate_decisions has no invited column yet — run the migration");
+      insertBase(row).then(written).catch(complain);
+    });
 }

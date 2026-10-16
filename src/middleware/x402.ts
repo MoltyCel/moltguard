@@ -5,6 +5,7 @@ import { verifyPayment } from '../services/x402-verify.js';
 import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
 import { buildExtensions } from '../services/x402-bazaar.js';
 import { gateFor, type Decision } from './moltrust-gate.js';
+import { gateBlock, parseOperatorDid } from './gate-invite.js';
 import { recordGateDecision } from '../services/gateLog.js';
 import { paymentAddress } from '../paymentAddress.js';
 
@@ -50,6 +51,10 @@ const GATE_JWKS_PATH = process.env.MOLTRUST_JWKS_PATH ?? '/etc/moltrust/jwks.jso
 // agents that cannot have a score yet. The library default is the other way
 // round; a host that has not thought about it should not be opted in.
 const GATE_ALLOW_TRACK_RECORD = process.env.MOLTRUST_GATE_ALLOW_TRACK_RECORD !== 'false';
+// Whoever runs this gate, named as the referrer in the 402 invitation. Unset
+// or malformed means no invitation; see gate-invite.ts for why there is no
+// fallback.
+const GATE_OPERATOR_DID = parseOperatorDid(process.env.MOLTRUST_GATE_OPERATOR_DID);
 
 /** Share of priced requests that earned the discount. Read by /health. */
 export const gateStats = {
@@ -61,6 +66,9 @@ export const gateStats = {
   // discount — has no number behind it.
   discountedVia: { score: 0, track_record: 0 } as Record<string, number>,
   denied: {} as Record<string, number>,
+  // 402s that went out carrying an invitation. Since start; the daily figure
+  // comes from gate_decisions.invited.
+  invited: 0,
   get share(): number {
     return this.priced === 0 ? 0 : Number((this.discounted / this.priced).toFixed(4));
   },
@@ -143,6 +151,12 @@ export function createX402Middleware(): MiddlewareHandler {
 
   console.log('[x402] ENABLED (v2) — paid endpoints will return 402 without valid payment');
   const discountGate = buildDiscountGate();
+  if (GATE_OPERATOR_DID) {
+    console.log(`[x402] 402 invitation active, referrer ${GATE_OPERATOR_DID}`);
+  } else {
+    console.log(`[x402] 402 invitation inactive — MOLTRUST_GATE_OPERATOR_DID ${
+      process.env.MOLTRUST_GATE_OPERATOR_DID ? 'is not a did:moltrust identifier' : 'is not set'}`);
+  }
 
   return async (c: Context, next: Next) => {
     const method = c.req.method;
@@ -208,9 +222,15 @@ export function createX402Middleware(): MiddlewareHandler {
         // score_withheld means they have, and are too new to qualify.
         gateStats.denied[gate.reason] = (gateStats.denied[gate.reason] ?? 0) + 1;
       }
-      // Written after the decision and never awaited: the price the caller is
-      // about to be quoted is already settled, and a slow database must not
-      // reach a request path built to make no network call at all.
+    }
+
+    // Written once the request has left, with whether a 402 invitation went
+    // out, and never awaited: the price the caller is about to be quoted is
+    // already settled, and a slow database must not reach a request path built
+    // to make no network call at all. Writing at the decision instead would
+    // count a paid request as invited when no 402 was ever sent.
+    const logGate = (invited: boolean) => {
+      if (!gate) return;
       recordGateDecision({
         did: gate.did ?? null,
         path,
@@ -222,8 +242,9 @@ export function createX402Middleware(): MiddlewareHandler {
         // governance payload presented at a gate that does not accept one.
         detail: gate.detail,
         via: gate.allowed ? (gate.via ?? 'score') : null,
+        invited,
       });
-    }
+    };
 
     // Hackathon keys waive the price on the read endpoints they were meant for.
     // They never waive credential issuance: /hackathon/register hands a 72-hour
@@ -231,6 +252,7 @@ export function createX402Middleware(): MiddlewareHandler {
     // a self-service route to signed credentials.
     const apiKey = c.req.header('X-API-Key') ?? c.req.header('x-api-key') ?? '';
     if (apiKey && !isCredentialIssuance(path) && await isValidHackathonKey(apiKey)) {
+      logGate(false);
       return next();
     }
 
@@ -246,6 +268,7 @@ export function createX402Middleware(): MiddlewareHandler {
       if (outcome.ok) {
         c.set('x402_protocol_version', protocolVersion);
         c.set('x402_tx_hash', outcome.txHash);
+        logGate(false);
         return next();
       }
       failure = { reason: outcome.reason, detail: outcome.detail };
@@ -276,11 +299,19 @@ export function createX402Middleware(): MiddlewareHandler {
       })(),
     };
 
+    // What the gate decided, next to the price it produced, and on
+    // `attestation_missing` the invitation to register. Body only: the
+    // PAYMENT-REQUIRED header is the x402 object and nothing else.
+    const block = gate ? gateBlock(gate, GATE_OPERATOR_DID) : null;
+    if (block?.invite) gateStats.invited += 1;
+    logGate(Boolean(block?.invite));
+
     c.header('PAYMENT-REQUIRED', Buffer.from(JSON.stringify(payload)).toString('base64'));
     return c.json(
       {
         error: 'Payment Required',
         ...(failure ? { paymentError: failure.reason, paymentErrorDetail: failure.detail } : {}),
+        ...(block ? { moltrustGate: block } : {}),
         // Bare at the top level, as the spec's own example and every indexed
         // peer do it.
         ...payload,

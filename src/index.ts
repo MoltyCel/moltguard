@@ -108,7 +108,7 @@ app.onError((err, c) => {
 
 console.log(`
 ╔══════════════════════════════════════════════╗
-║           MoltGuard v1.5.0                   ║
+║           MoltGuard v1.6.0                   ║
 ║   Trust & Integrity for the Agent Economy    ║
 ╠══════════════════════════════════════════════╣
 ║  Port:     ${String(CONFIG.port).padEnd(33)}║
