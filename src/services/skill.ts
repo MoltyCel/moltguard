@@ -925,10 +925,12 @@ export async function issueVerifiedSkillVC(params: {
     auditorVersion: AUDITOR_VERSION,
   };
 
-  const anchorTx = `0x${createHash('sha256')
-    .update(JSON.stringify({ ...params, issuedAt: now.toISOString() }))
-    .digest('hex')
-    .slice(0, 64)}`;
+  // An `anchorTx` stood here, built as sha256 over the request parameters and
+  // sliced to 64 hex. It went into the signed credentialSubject, so our own
+  // signature vouched for a transaction that was never sent. The real anchor is
+  // written later by anchorSkillVC() into skill_credentials.anchor_tx and is
+  // readable through getAnchorInfo(skillHash); at issuance time no transaction
+  // exists yet, so the credential cannot carry one and no longer pretends to.
 
   const credentialSubject = {
     id: params.authorDID,
@@ -937,7 +939,6 @@ export async function issueVerifiedSkillVC(params: {
     skillHash: params.skillHash,
     repositoryUrl: params.repositoryUrl,
     audit: auditData,
-    anchorTx,
     issuedBy: 'did:web:moltrust.ch',
     authorizationEnvelope: resolveAAE('did:web:moltrust.ch', params.authorDID, params.authorizationEnvelope, VC_EXPIRY_DAYS * 86400),
   };
