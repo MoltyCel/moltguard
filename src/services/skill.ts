@@ -928,10 +928,12 @@ export async function issueVerifiedSkillVC(params: {
     auditorVersion: AUDITOR_VERSION,
   };
 
-  const anchorTx = `0x${createHash('sha256')
-    .update(JSON.stringify({ ...params, issuedAt: now.toISOString() }))
-    .digest('hex')
-    .slice(0, 64)}`;
+  // An `anchorTx` stood here, built as sha256 over the request parameters and
+  // sliced to 64 hex. It went into the signed credentialSubject, so our own
+  // signature vouched for a transaction that was never sent. The real anchor is
+  // written later by anchorSkillVC() into skill_credentials.anchor_tx and is
+  // readable through getAnchorInfo(skillHash); at issuance time no transaction
+  // exists yet, so the credential cannot carry one and no longer pretends to.
 
   const credentialSubject = {
     id: params.authorDID,
@@ -940,7 +942,6 @@ export async function issueVerifiedSkillVC(params: {
     skillHash: params.skillHash,
     repositoryUrl: params.repositoryUrl,
     audit: auditData,
-    anchorTx,
     issuedBy: 'did:web:moltrust.ch',
     authorizationEnvelope: resolveAAE('did:web:moltrust.ch', params.authorDID, params.authorizationEnvelope, VC_EXPIRY_DAYS * 86400),
   };
@@ -1029,25 +1030,63 @@ function writeKey(): `0x${string}` | null {
   return /^0x[0-9a-fA-F]{64}$/.test(k) ? (k as `0x${string}`) : null;
 }
 
-export async function anchorSkillVC(skillHash: string): Promise<{tx: string; block: string} | null> {
+// The anchor is off unless SKILL_ANCHOR_ENABLED says otherwise. Turning it on
+// spends the productive signer for every paid skill credential, so it is a
+// decision of its own (ops S4), not a side effect of deploying this code.
+export function anchorEnabled(): boolean {
+  return /^(1|true|yes|on)$/i.test((process.env.SKILL_ANCHOR_ENABLED ?? '').trim());
+}
+
+/**
+ * What happened to the anchor, for the caller. Only `anchored` carries a
+ * transaction hash, and only one that was sent and mined; every other status
+ * says why there is none.
+ */
+export type AnchorResult =
+  | { status: 'anchored'; tx: string; block: string; recorded: boolean }
+  | { status: 'disabled' | 'no_key' | 'failed'; tx: null; reason: string };
+
+// A reason travels to the caller. Anything shaped like a key or a hash is cut
+// out of it, whatever the RPC put into its error message.
+function safeReason(e: any): string {
+  return String(e?.shortMessage ?? e?.message ?? e)
+    .replace(/(0x)?[0-9a-fA-F]{64}/g, '<redacted>')
+    .slice(0, 200);
+}
+
+export async function anchorSkillVC(skillHash: string): Promise<AnchorResult> {
+  if (!anchorEnabled()) {
+    console.warn('Skill VC not anchored: anchoring is switched off (SKILL_ANCHOR_ENABLED)');
+    return { status: 'disabled', tx: null, reason: 'on-chain anchoring is switched off on this server' };
+  }
   const key = writeKey();
   if (!key) {
-    console.warn('BASE_WRITE_KEY not set or malformed — skipping on-chain anchor');
-    return null;
+    console.warn('Skill VC not anchored: BASE_WRITE_KEY not set or malformed');
+    return { status: 'no_key', tx: null, reason: 'no signing key is configured for anchoring' };
   }
+  let sent: { tx: string; block: string };
   try {
-    const { tx, block } = await anchorSender(anchorCalldata(skillHash), key);
-    await query(
-      'UPDATE skill_credentials SET anchor_tx = $1, anchor_block = $2 WHERE skill_hash = $3',
-      [tx, block, skillHash]
-    );
-    console.log('Skill VC anchored: ' + tx + ' block ' + block);
-    return { tx, block };
+    sent = await anchorSender(anchorCalldata(skillHash), key);
   } catch (e: any) {
     // The message, never the error object: viem errors can carry request details.
-    console.error('On-chain anchor failed:', String(e?.shortMessage ?? e?.message ?? e).slice(0, 200));
-    return null;
+    const reason = safeReason(e);
+    console.error('On-chain anchor failed:', reason);
+    return { status: 'failed', tx: null, reason: 'anchor transaction failed: ' + reason };
   }
+  // The transaction exists from here on. A failed bookkeeping write does not
+  // make it a failed anchor; it is reported as anchored but not recorded.
+  let recorded = true;
+  try {
+    await query(
+      'UPDATE skill_credentials SET anchor_tx = $1, anchor_block = $2 WHERE skill_hash = $3',
+      [sent.tx, sent.block, skillHash]
+    );
+  } catch (e: any) {
+    recorded = false;
+    console.error('Skill VC anchored but not recorded:', sent.tx, safeReason(e));
+  }
+  console.log('Skill VC anchored: ' + sent.tx + ' block ' + sent.block);
+  return { status: 'anchored', tx: sent.tx, block: sent.block, recorded };
 }
 
 export async function getAnchorInfo(skillHash: string): Promise<{anchor_tx: string | null; anchor_block: string | null}> {
