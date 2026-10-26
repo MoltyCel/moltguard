@@ -1,5 +1,5 @@
 // Challenge-Response Holder Binding — Service Layer
-import { randomBytes, verify, createPublicKey } from 'node:crypto';
+import { randomBytes, verify, createPublicKey, timingSafeEqual } from 'node:crypto';
 import { query } from './db.js';
 
 const NONCE_BYTES = 32;
@@ -154,6 +154,51 @@ export async function requireHolderBinding(
   return { ok: true };
 }
 
+// ── Owner channel (first-time key registration) ──
+
+/**
+ * Resolve which agent DID an API key belongs to.
+ *
+ * The same lookup the Python side does in moltrust-api
+ * `app/credits.py::resolve_did_from_api_key`, against the same `api_keys`
+ * table in the shared `moltstack` database — no second credential store and no
+ * new auth mechanism.
+ *
+ * Two things it does that the Python version does not:
+ *
+ * - `active = TRUE` is required. A deactivated key must not be able to claim an
+ *   identity, and this call establishes one.
+ * - The stored key is read back and compared byte for byte in constant time.
+ *   The SQL equality above still decides which row is fetched — that part is
+ *   the database's — but the application no longer takes the row's existence
+ *   as proof on its own. It also pins the comparison to byte equality rather
+ *   than whatever the column's collation would call equal.
+ *
+ * Returns the owner DID, or null when the key is unknown, inactive or unbound.
+ */
+async function resolveOwnerDid(apiKey: string): Promise<string | null> {
+  const { rows } = await query(
+    'SELECT key, owner_did FROM api_keys WHERE key = $1 AND active = TRUE',
+    [apiKey],
+  );
+  if (rows.length === 0) return null;
+
+  const stored: string | null = rows[0].key;
+  if (!stored || !constantTimeEquals(apiKey, stored)) return null;
+
+  return rows[0].owner_did ?? null;
+}
+
+/** Byte-for-byte comparison that does not stop at the first difference. */
+function constantTimeEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf-8');
+  const right = Buffer.from(b, 'utf-8');
+  // timingSafeEqual throws on differing lengths; a length difference is already
+  // a mismatch, and the length of an API key is not the secret.
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 // ── Register Public Key ──
 
 export type RegisterKeyProof = { nonce: string; signatureB64url: string };
@@ -170,15 +215,20 @@ export type RegisterKeyResult =
  * anyone could point a foreign DID at their own key and then pass
  * /vc/verify-binding as that DID, which also destroys the victim's binding.
  *
- * First-time registration is closed (E1). An agent with no key on record has
- * nothing to prove possession of, so there is no way to tell the owner from
- * anyone else at this endpoint. The key belongs in the owner channel that
- * already authenticates the DID.
+ * First-time registration goes through the owner channel (E1): an agent with
+ * no key on record has nothing to prove possession of, so possession cannot be
+ * the test. What can be tested is who holds the API key bound to that DID —
+ * the same fact the rest of the platform already treats as ownership. That
+ * channel opens exactly once per DID and only while `public_key_hex` is null.
+ *
+ * The two paths never overlap. A DID with a key on record can only be changed
+ * with proof of the current key; an API key buys nothing there.
  */
 export async function registerPublicKey(
   did: string,
   publicKeyHex: string,
   proof?: RegisterKeyProof | null,
+  apiKey?: string | null,
 ): Promise<RegisterKeyResult> {
   // Validate hex format (Ed25519 public key = 32 bytes = 64 hex chars)
   if (!/^[a-fA-F0-9]{64}$/.test(publicKeyHex)) {
@@ -203,14 +253,56 @@ export async function registerPublicKey(
   const current: string | null = rows[0].public_key_hex;
 
   if (!current) {
-    return {
-      registered: false,
-      error: 'first_registration_locked',
-      status: 403,
-      detail:
-        'First-time key registration is not available at this endpoint (E1). ' +
-        'Register the key through the owner channel that authenticates the DID.',
-    };
+    // ── E1: owner channel, first registration only ──
+    if (!apiKey) {
+      return {
+        registered: false,
+        error: 'owner_key_required',
+        status: 401,
+        detail:
+          'This DID has no key on record. First-time registration is authorised ' +
+          'by the API key bound to the DID: send it as X-API-Key.',
+      };
+    }
+
+    const ownerDid = await resolveOwnerDid(apiKey);
+    if (ownerDid === null) {
+      return {
+        registered: false,
+        error: 'owner_key_invalid',
+        status: 403,
+        detail: 'API key is unknown, inactive, or not bound to any DID.',
+      };
+    }
+    if (ownerDid !== did) {
+      return {
+        registered: false,
+        error: 'owner_key_mismatch',
+        status: 403,
+        detail: 'API key is bound to a different DID.',
+      };
+    }
+
+    // `AND public_key_hex IS NULL` carries the once-only rule in the write
+    // itself, not just in the check above: two concurrent first registrations
+    // cannot both succeed, and a request that raced and lost is told so rather
+    // than silently overwriting the winner.
+    const first = await query(
+      'UPDATE agents SET public_key_hex = $1 WHERE did = $2 AND public_key_hex IS NULL',
+      [publicKeyHex, did],
+    );
+    if ((first.rowCount ?? 0) === 0) {
+      return {
+        registered: false,
+        error: 'already_registered',
+        status: 409,
+        detail:
+          'A key was registered for this DID in the meantime. Replacing it ' +
+          'requires proof of possession of that key.',
+      };
+    }
+
+    return { registered: true };
   }
 
   if (!proof || typeof proof.nonce !== 'string' || typeof proof.signatureB64url !== 'string') {
