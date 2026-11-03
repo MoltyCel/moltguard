@@ -562,7 +562,7 @@ export const spec: OpenAPIV3_1.Document = {
         operationId: 'getAgentDetailPaid',
         security: [{ x402: [] }],
         ...({ 'x-moltrust-pricing': {
-          amount: '0.05', currency: 'USDC', chain: 'eip155:8453',
+          amount: '0.01', currency: 'USDC', chain: 'eip155:8453',
         } } as any),
         parameters: [
           { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' }, description: 'EVM 0x address' },
@@ -609,7 +609,7 @@ export const spec: OpenAPIV3_1.Document = {
         operationId: 'getAgentScorePaid',
         security: [{ x402: [] }],
         ...({ 'x-moltrust-pricing': {
-          amount: '0.05', currency: 'USDC', chain: 'eip155:8453',
+          amount: '0.01', currency: 'USDC', chain: 'eip155:8453',
         } } as any),
         parameters: [
           { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' }, description: 'EVM 0x address' },
@@ -781,7 +781,7 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'Heuristic clustering: wallet age, counterparty graph, funding-source convergence. Returns cluster detection verdict + confidence + evidence.',
         operationId: 'getSybilScan',
         security: [{ x402: [] }],
-        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        ...({ 'x-moltrust-pricing': { amount: '0.02', currency: 'USDC', chain: 'eip155:8453' } } as any),
         parameters: [
           { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' }, description: 'EVM 0x address' },
         ],
@@ -814,7 +814,7 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'Polymarket/Kalshi integrity check — outcome anomalies, oracle manipulation, statistical irregularities.',
         operationId: 'getMarketCheckPaid',
         security: [{ x402: [] }],
-        ...({ 'x-moltrust-pricing': { amount: '0.05', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        ...({ 'x-moltrust-pricing': { amount: '0.01', currency: 'USDC', chain: 'eip155:8453' } } as any),
         parameters: [
           { name: 'marketId', in: 'path', required: true, schema: { type: 'string' } },
         ],
@@ -828,10 +828,10 @@ export const spec: OpenAPIV3_1.Document = {
       get: {
         tags: ['market-integrity'],
         summary: 'Aggregated market integrity feed (paid)',
-        description: 'NOTE per BACKLOG: this endpoint is currently in BOTH X402_PRICES and X402_FREE_PATHS in moltguard middleware; live behaviour is free. Pricing-config will be consolidated at P2-followup. Spec reflects intent (paid \$0.10).',
+        description: 'NOTE per BACKLOG: this endpoint is currently in BOTH X402_PRICES and X402_FREE_PATHS in moltguard middleware; live behaviour is free. Pricing-config will be consolidated at P2-followup. Spec reflects intent (paid \$0.02).',
         operationId: 'getMarketFeed',
         security: [{ x402: [] }],
-        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        ...({ 'x-moltrust-pricing': { amount: '0.02', currency: 'USDC', chain: 'eip155:8453' } } as any),
         responses: {
           '200': { description: 'Market feed', content: { 'application/json': { schema: { '$ref': '#/components/schemas/MarketFeedResult' } } } },
         },
@@ -970,7 +970,7 @@ export const spec: OpenAPIV3_1.Document = {
         summary: 'Issue a generic W3C Verifiable Credential (paid)',
         operationId: 'issueCredential',
         security: [{ x402: [] }],
-        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        ...({ 'x-moltrust-pricing': { amount: '0.02', currency: 'USDC', chain: 'eip155:8453' } } as any),
         requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/VCIssueRequestBase' } } } },
         responses: {
           '200': { description: 'Issued VC', content: { 'application/json': { schema: { '$ref': '#/components/schemas/CredentialIssueResult' } } } },
@@ -1110,7 +1110,7 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'Polymarket/Kalshi market integrity — outcome anomalies, oracle drift, statistical irregularities. Prefix-matched in x402-prices.',
         operationId: 'getPredictionIntegrity',
         security: [{ x402: [] }],
-        ...({ 'x-moltrust-pricing': { amount: '0.10', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        ...({ 'x-moltrust-pricing': { amount: '0.02', currency: 'USDC', chain: 'eip155:8453' } } as any),
         parameters: [{ name: 'market_id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Integrity result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PredictionIntegrity' } } } },
@@ -1154,7 +1154,7 @@ export const spec: OpenAPIV3_1.Document = {
         description: 'MoltRadar: every ERC-8004-identified wallet on one market, its resolved on-chain operator, plus the dominant operator and its net side/size.',
         operationId: 'getRadarMarketPaid',
         security: [{ x402: [] }],
-        ...({ 'x-moltrust-pricing': { amount: '0.05', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        ...({ 'x-moltrust-pricing': { amount: '0.01', currency: 'USDC', chain: 'eip155:8453' } } as any),
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Operator decomposition', content: { 'application/json': { schema: { type: 'object' } } } },

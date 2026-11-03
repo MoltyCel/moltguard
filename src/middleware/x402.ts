@@ -8,6 +8,7 @@ import { gateFor, type Decision } from './moltrust-gate.js';
 import { gateBlock, parseOperatorDid } from './gate-invite.js';
 import { recordGateDecision } from '../services/gateLog.js';
 import { paymentAddress } from '../paymentAddress.js';
+import { planCovers, FAIR_USE_PER_AGENT_MONTH } from '../services/plan-coverage.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -254,6 +255,24 @@ export function createX402Middleware(): MiddlewareHandler {
     if (apiKey && !isCredentialIssuance(path) && await isValidHackathonKey(apiKey)) {
       logGate(false);
       return next();
+    }
+
+    // A paid MolTrust plan (Base, Scale) covers the read checks up to a
+    // fair-use cap per agent and month; see services/plan-coverage.ts. Never
+    // credential issuance. A payment header wins: a caller who pays is not
+    // counted against the plan.
+    if (apiKey && !isCredentialIssuance(path) && !c.req.header('PAYMENT-SIGNATURE')
+        && !c.req.header('X-PAYMENT')) {
+      const coverage = await planCovers(apiKey);
+      if (coverage.covered) {
+        c.set('moltrust_plan_payer', coverage.payerRef);
+        c.header('X-MolTrust-Plan', `covered; calls-this-month=${coverage.callsThisMonth}; fair-use=${FAIR_USE_PER_AGENT_MONTH}`);
+        logGate(false);
+        return next();
+      }
+      if (coverage.reason === 'fair_use') {
+        c.header('X-MolTrust-Plan', `fair-use-reached; fair-use=${FAIR_USE_PER_AGENT_MONTH}`);
+      }
     }
 
     // Check payment header — v2 first, then v1 backward compat

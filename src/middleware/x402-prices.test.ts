@@ -63,12 +63,12 @@ describe('free list and price table do not overlap', () => {
 
 describe('parameterised routes still price', () => {
   const priced: Array<[string, string, number]> = [
-    ['GET', '/api/agent/score/0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38', 0.05],
-    ['GET', '/api/agent/detail/0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38', 0.05],
-    ['GET', '/api/market/check/0x1234', 0.05],
-    ['GET', '/prediction/integrity/42', 0.10],
-    ['GET', '/radar/market/7', 0.05],
-    ['POST', '/api/credential/issue', 0.10],
+    ['GET', '/api/agent/score/0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38', 0.01],
+    ['GET', '/api/agent/detail/0xd8f5bB747f7459BF3e1cc1aD041E2cA57B946C38', 0.01],
+    ['GET', '/api/market/check/0x1234', 0.01],
+    ['GET', '/prediction/integrity/42', 0.02],
+    ['GET', '/radar/market/7', 0.01],
+    ['POST', '/api/credential/issue', 0.02],
     ['POST', '/vc/skill/issue', 5.0],
   ];
 
