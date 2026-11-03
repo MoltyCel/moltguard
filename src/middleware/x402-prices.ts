@@ -1,23 +1,29 @@
 // x402 Price Table — all prices in USDC on Base
+//
+// Checks cost what the credit rail charges for comparable work: 1 credit =
+// 0.01 USDC (/credits/deposit-info), reads 1 credit, heavier checks and the
+// signed trust credential 2. VC issuance stays at 5.00. A paid plan covers the
+// reads (services/plan-coverage.ts). Changed 2026-11-03, PRICING-KOHAERENZ;
+// before: 0.05 / 0.10.
 // Matched to actual MoltGuard route paths
 
 export const X402_PRICES: Record<string, number> = {
   // MoltGuard Core (paid)
-  'GET /api/agent/score':       0.05,
-  'GET /api/agent/detail':      0.05,
-  'GET /api/sybil/scan':        0.10,
-  'GET /api/market/check':      0.05,
-  'POST /api/credential/issue': 0.10,
+  'GET /api/agent/score':       0.01,
+  'GET /api/agent/detail':      0.01,
+  'GET /api/sybil/scan':        0.02,
+  'GET /api/market/check':      0.01,
+  'POST /api/credential/issue': 0.02,
 
   // Skill Verification
   'POST /vc/skill/issue':       5.00,
 
   // Prediction Markets
-  'GET /prediction/integrity':  0.10,  // prefix match for /prediction/integrity/:market_id
+  'GET /prediction/integrity':  0.02,  // prefix match for /prediction/integrity/:market_id
   'POST /vc/prediction/issue':  5.00,
 
   // MoltRadar — operator clusters (clusters + operators are free, see X402_FREE_PATHS)
-  'GET /radar/market':          0.05,  // prefix match for /radar/market/:id
+  'GET /radar/market':          0.01,  // prefix match for /radar/market/:id
 
   // Shopping & Travel VC issuance
   'POST /vc/buyer-agent/issue': 5.00,
