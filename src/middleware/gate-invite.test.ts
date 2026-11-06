@@ -113,6 +113,10 @@ async function appWith(operator: string | undefined) {
   return { app, gateStats, query: query as any };
 }
 
+// A well-formed address: since X402-1106 an unusable one is refused with 400
+// before any price is quoted, and these cases are about the 402.
+const SCORED_PATH = '/api/agent/score/0x' + '1'.repeat(40);
+
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const invitedParam = (q: any) =>
   q.mock.calls.filter((c: any[]) => String(c[0]).includes('INSERT INTO gate_decisions')).map((c: any[]) => c[1][6]);
@@ -121,7 +125,7 @@ describe('the 402, end to end', () => {
   it('trigger: no attestation, operator configured -> invite with the operator as referrer', async () => {
     const { app, gateStats, query } = await appWith(OPERATOR);
     query.mockClear();
-    const res = await app.request('/api/agent/score/0xabc');
+    const res = await app.request(SCORED_PATH);
     expect(res.status).toBe(402);
     const body = await res.json();
     expect(body.moltrustGate.reason).toBe('attestation_missing');
@@ -139,7 +143,7 @@ describe('the 402, end to end', () => {
   it('silence: another reason -> moltrustGate without invite, row not invited', async () => {
     const { app, gateStats, query } = await appWith(OPERATOR);
     query.mockClear();
-    const res = await app.request('/api/agent/score/0xabc', {
+    const res = await app.request(SCORED_PATH, {
       headers: { 'x-moltrust-attestation': 'not.a.jws' },
     });
     expect(res.status).toBe(402);
@@ -154,7 +158,7 @@ describe('the 402, end to end', () => {
   it('silence: no operator DID -> no invite, no fallback', async () => {
     for (const operator of [undefined, '', 'did:moltrust:not-hex']) {
       const { app, gateStats } = await appWith(operator);
-      const res = await app.request('/api/agent/score/0xabc');
+      const res = await app.request(SCORED_PATH);
       expect(res.status, String(operator)).toBe(402);
       const body = await res.json();
       expect(body.moltrustGate.reason).toBe('attestation_missing');

@@ -1,6 +1,8 @@
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import { query } from '../services/db.js';
-import { X402_PRICES, X402_FREE_PATHS, matchPriceKey, normalizePath, isUnderPricedPrefix } from './x402-prices.js';
+import {
+  X402_PRICES, X402_FREE_PATHS, matchPriceKey, normalizePath, isUnderPricedPrefix, addressParamProblem,
+} from './x402-prices.js';
 import { verifyPayment } from '../services/x402-verify.js';
 import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
 import { buildExtensions } from '../services/x402-bazaar.js';
@@ -201,6 +203,25 @@ export function createX402Middleware(): MiddlewareHandler {
       return next();
     }
 
+    // A request its handler will refuse is not quoted and never settled. The
+    // handlers answer an unusable address with 400, but only after this
+    // middleware has asked for money: /api/agent/detail/0 got a 402, and a
+    // buyer who paid it would have been charged for the 400 (X402-1106). The
+    // bare route template keeps its 402 for the crawlers that read prices from
+    // it, but a payment sent against it is refused here, before settlement.
+    const addressCheck = addressParamProblem(matchPriceKey(method, path), path);
+    const paymentPresented = Boolean(c.req.header('PAYMENT-SIGNATURE') || c.req.header('X-PAYMENT'));
+    if (addressCheck === 'invalid' || (addressCheck === 'template' && paymentPresented)) {
+      const segment = path.slice(path.lastIndexOf('/') + 1);
+      return c.json({
+        error: 'invalid_address',
+        message: 'The path must end in a 0x wallet address (0x followed by 40 hex characters), '
+          + 'as in /guard/api/agent/detail/<address>. No payment was requested or taken.',
+        received: segment.slice(0, 100),
+        documentation: 'https://api.moltrust.ch/.well-known/x402.json',
+      }, 400);
+    }
+
     // The MolTrust discount. Evaluated before anything is quoted, so the 402
     // challenge advertises the price this caller will actually be charged —
     // quoting one number and settling another is how a facilitator ends up
@@ -287,6 +308,18 @@ export function createX402Middleware(): MiddlewareHandler {
       if (outcome.ok) {
         c.set('x402_protocol_version', protocolVersion);
         c.set('x402_tx_hash', outcome.txHash);
+        // The settlement receipt, as both specs define it: base64 JSON of the
+        // SettleResponse, in PAYMENT-RESPONSE for v2 and X-PAYMENT-RESPONSE for
+        // v1. Without it a buyer has paid and cannot say which transaction
+        // paid for what it received.
+        const settlement = {
+          success: true,
+          transaction: outcome.txHash,
+          network: `eip155:${BASE_CHAIN_ID}`,
+          ...(outcome.payer ? { payer: outcome.payer } : {}),
+        };
+        c.header(protocolVersion === 'v1' ? 'X-PAYMENT-RESPONSE' : 'PAYMENT-RESPONSE',
+          Buffer.from(JSON.stringify(settlement)).toString('base64'));
         logGate(false);
         return next();
       }
