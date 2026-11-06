@@ -77,6 +77,41 @@ export function isUnderPricedPrefix(path: string): boolean {
   return PRICED_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
 }
 
+/**
+ * Priced routes whose last path segment is a wallet address. The handlers
+ * reject anything else with 400, but they run after the middleware, so a buyer
+ * who sent /api/agent/detail/0 was quoted a price — and, once paid, would have
+ * been charged for a 400. The middleware checks the same thing first.
+ */
+export const ADDRESS_PARAM_ROUTES: readonly string[] = [
+  'GET /api/agent/score',
+  'GET /api/agent/detail',
+  'GET /api/sybil/scan',
+];
+
+/**
+ * What a discovery crawler sends: the route template with its placeholder left
+ * in, as the OpenAPI document and the bazaar routeTemplate spell it. Indexers
+ * read the 402 at that URL to learn the price, so it keeps its challenge; it is
+ * never paid for, see addressParamProblem.
+ */
+const TEMPLATE_PLACEHOLDER = /^(\{address\}|:address|<address>)$/i;
+
+export type AddressParamCheck = 'ok' | 'invalid' | 'template' | 'not_applicable';
+
+/**
+ * Does this priced request carry a usable address where the route needs one?
+ * `key` is the matchPriceKey() result for the request.
+ */
+export function addressParamProblem(key: string | null, path: string): AddressParamCheck {
+  if (key === null || !ADDRESS_PARAM_ROUTES.includes(key)) return 'not_applicable';
+  const prefix = key.split(' ')[1];
+  const rest = path === prefix ? '' : path.slice(prefix.length + 1);
+  if (/^0x[a-fA-F0-9]{40}$/.test(rest)) return 'ok';
+  if (TEMPLATE_PLACEHOLDER.test(rest)) return 'template';
+  return 'invalid';
+}
+
 export function matchPriceKey(method: string, path: string): string | null {
   const exact = `${method} ${path}`;
   if (X402_PRICES[exact] !== undefined) return exact;

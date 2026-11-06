@@ -31,9 +31,11 @@ export const spec: OpenAPIV3_1.Document = {
       x402: {
         type: 'apiKey',
         in: 'header',
-        name: 'X-PAYMENT',
+        name: 'PAYMENT-SIGNATURE',
         description:
-          'x402 v2 payment receipt header. Format: "x402 <base64-encoded-receipt>". ' +
+          'x402 payment header: base64-encoded JSON PaymentPayload, as any standard x402 client sends it. ' +
+          'v2 clients use PAYMENT-SIGNATURE, v1 clients X-PAYMENT; both are accepted. A successful payment ' +
+          'is answered with PAYMENT-RESPONSE (v1: X-PAYMENT-RESPONSE) carrying the settlement transaction. ' +
           'See https://x402.org/writing/x402-v2-launch.',
       },
     },
