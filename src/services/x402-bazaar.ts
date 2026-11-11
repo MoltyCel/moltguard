@@ -114,9 +114,21 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
     pathParamExample: { marketId: '0x…' },
     output: {
       type: 'json',
+      // This example advertised `integrityScore: 84`, `spreadPct: 1.2` and
+      // `oracleVerified: true`. The route returns none of the three. The last
+      // one is the reason this is a defect and not a typo: `oracleVerified`
+      // claims a check against an oracle, it was published in the x402 manifest
+      // where a buyer reads it before paying, and nothing behind the endpoint
+      // ever performed one. The shape below is what checkMarketIntegrity()
+      // actually returns.
       example: {
-        marketId: '0x…', integrityScore: 84, spreadPct: 1.2,
-        oracleVerified: true, flags: [], _meta: {},
+        marketId: '0x…', marketQuestion: 'string', slug: 'string',
+        anomalyScore: 23, riskTier: 'low',
+        signals: {
+          volumeSpike: false, volumeChange24h: 0,
+          walletConcentration: null, newWalletInflux: null, priceVolumeDiv: false,
+        },
+        assessment: 'string', _meta: {},
       },
     },
   },

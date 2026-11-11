@@ -177,14 +177,16 @@ app.post('/internal/harness/publish-proof', async (c) => {
     hash: proofHash,
   });
 
-  // Simulate on-chain anchor (hash-based tx ID)
-  const anchorTx = `0x${proofHash.slice(0, 64)}`;
+  // A simulated anchor stood here: `0x` + the first 64 chars of the proof hash,
+  // with the comment "Simulate on-chain anchor". It left through
+  // /transparency/latest, /history and /verify/:hash — all unauthenticated —
+  // beside `network: "base"`, so a reader had every reason to query it. Nothing
+  // was ever sent. Removed; this harness does not anchor.
 
   const fullProof = {
     ...proofVC,
     credentialSubject: {
       ...proofVC.credentialSubject,
-      anchorTx,
       proofHash: `sha256:${proofHash}`,
     },
     proof: {
@@ -201,7 +203,7 @@ app.post('/internal/harness/publish-proof', async (c) => {
   writeFileSync(join(PROOFS_DIR, filename), JSON.stringify(fullProof, null, 2));
   writeFileSync(join(PROOFS_DIR, 'latest.json'), JSON.stringify(fullProof, null, 2));
 
-  return c.json({ published: true, proofHash: `sha256:${proofHash}`, anchorTx, filename });
+  return c.json({ published: true, proofHash: `sha256:${proofHash}`, filename });
 });
 
 // List past proofs (metadata only)
@@ -223,7 +225,6 @@ app.get('/internal/harness/proofs', (c) => {
         vertical: data.credentialSubject?.vertical,
         passRate: data.credentialSubject?.evaluationSummary?.passRate,
         testsRun: data.credentialSubject?.evaluationSummary?.testsRun,
-        anchorTx: data.credentialSubject?.anchorTx,
       };
     } catch {
       return null;

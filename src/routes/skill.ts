@@ -47,15 +47,15 @@ app.get('/skill/info', (c) => {
         'POST /vc/skill/issue — Issue VerifiedSkillCredential ($5 USDC via x402)',
       ],
     },
-    auditChecks: [
-      'Prompt injection detection',
-      'Data exfiltration patterns',
-      'Tool scope violations',
-      'Capability-content mismatch',
-      'External data ingestion risk',
-      'Format validity',
-      'Metadata completeness',
-    ],
+    // Derived from CHECK_REGISTRY, not typed out again. The hand-written list
+    // named seven checks while the auditor ran ten — secrets_scan,
+    // a2a_discovery_scan and mcp_scan were missing — and both endpoints
+    // reported the same version while disagreeing about what that version
+    // does. A caller who audits the checklist before trusting the score got a
+    // shorter list than the one that ran, which is the wrong direction for a
+    // service whose argument is that you can check its work.
+    auditChecks: CHECK_REGISTRY.map((c) => c.display_name),
+    auditCheckCount: CHECK_REGISTRY.length,
     passingScore: 70,
     credentialExpiry: '90 days',
     // Was /docs/skill-hash-spec, which has always been a 404: /skill/info is
@@ -216,14 +216,11 @@ app.post('/vc/skill/issue', async (c) => {
     // Persist to DB (storeVC is now async)
     await storeVC(vc);
 
-    // Anchor on Base L2 (async, non-blocking)
-    anchorSkillVC(skillHash).then(anchor => {
-      if (anchor) {
-        console.log('Skill VC anchored:', anchor.tx, 'block', anchor.block);
-      }
-    }).catch(() => {});
+    // Anchor on Base L2. Awaited so the caller learns what happened: an anchored
+    // credential gets the mined transaction, any other outcome its reason.
+    const anchor = await anchorSkillVC(skillHash);
 
-    return c.json(vc, 201);
+    return c.json({ ...vc, anchor }, 201);
   } catch (e: any) {
     if (e instanceof SkillFetchError) {
       return c.json({ error: e.code, message: e.message }, e.status);
