@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG } from '../config.js';
+import { paymentAddress } from '../paymentAddress.js';
 import { gateLogStats } from '../services/gateLog.js';
 import { gateStats } from '../middleware/x402.js';
 import type { ApiInfo } from '../types/index.js';
@@ -43,6 +44,7 @@ app.get('/moltrust/gate-stats', (c) =>
     discounted_share: gateStats.share,
     discounted_by_path: gateStats.discountedVia,
     denied_by_reason: gateStats.denied,
+    invited_402s: gateStats.invited,
     since_process_start: true,
     // The per-decision log is the durable half. A zero here next to a non-zero
     // priced_requests means the log is broken, which is worth seeing.
@@ -52,19 +54,18 @@ app.get('/moltrust/gate-stats', (c) =>
 );
 
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
-const MOLTGUARD_WALLET = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4da1F1A045A271D5838F5';
 
 app.get('/api/info', (c) => {
   const info: ApiInfo = {
     service: 'MoltGuard',
-    version: '1.5.0',
+    version: '1.6.0',
     description: 'All-in-One Trust & Integrity Service for the x402 Agent Economy',
     network: CONFIG.network,
     x402_enabled: X402_ENABLED,
     ...(X402_ENABLED
       ? {
           payment: {
-            wallet: MOLTGUARD_WALLET,
+            wallet: paymentAddress(),
             network: 'base',
             chain_id: 8453,
             token: 'USDC',
@@ -100,14 +101,14 @@ app.get('/api/info', (c) => {
         'GET  /prediction/leaderboard',
       ],
       paid: [
-        'GET  /api/agent/score/:address    ($0.05)',
-        'GET  /api/agent/detail/:address   ($0.05)',
-        'GET  /api/sybil/scan/:address     ($0.10)',
-        'GET  /api/market/check/:id        ($0.05)',
-        'GET  /api/market/feed             ($0.10)',
-        'POST /api/credential/issue        ($0.10)',
+        'GET  /api/agent/score/:address    ($0.01)',
+        'GET  /api/agent/detail/:address   ($0.01)',
+        'GET  /api/sybil/scan/:address     ($0.02)',
+        'GET  /api/market/check/:id        ($0.01)',
+        'GET  /api/market/feed             ($0.02)',
+        'POST /api/credential/issue        ($0.02)',
         'POST /vc/skill/issue              ($5.00)',
-        'GET  /prediction/integrity/:id    ($0.10)',
+        'GET  /prediction/integrity/:id    ($0.02)',
         'POST /vc/prediction/issue         ($5.00)',
         'POST /vc/buyer-agent/issue        ($5.00)',
         'POST /vc/travel-agent/issue       ($5.00)',

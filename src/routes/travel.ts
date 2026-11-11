@@ -8,6 +8,7 @@ import {
   getTripReceipts,
   issueTravelAgentVC,
 } from '../services/travel.js';
+import { disabled, OFF } from '../lib/disabled.js';
 
 const app = new Hono();
 
@@ -51,6 +52,11 @@ app.get('/travel/trip/:tripId', (c) => {
 
 // Free (early access): verify a travel booking
 app.post('/travel/verify', async (c) => {
+  // Disabled 2026-10-05, same three gaps as /shopping/verify: the signature is
+  // only checked when a jws happens to be present, a missing validUntil never
+  // expires, and a missing spendLimit is no limit.
+  if (OFF) return disabled(c, 'POST /travel/verify accepted a credential with no signature, '
+                   + 'no expiry and no spend limit, and answered with a receipt.');
   const body = await c.req.json().catch(() => ({}));
   const { agentDID, vc, merchant, segment, amount, currency, tripId, travelers } = body;
 

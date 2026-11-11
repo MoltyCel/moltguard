@@ -22,6 +22,7 @@ import {
   buildResourceInfo,
   checkAuthorization,
   isAuthorizationPayload,
+  normalizePaymentPayload,
 } from './x402-authorization.js';
 import { settle } from './x402-facilitator.js';
 import { buildExtensions } from './x402-bazaar.js';
@@ -108,12 +109,27 @@ async function releaseTxHash(txHash: string): Promise<void> {
   }
 }
 
+/**
+ * Decode a PAYMENT-SIGNATURE (v2) or X-PAYMENT (v1) header.
+ *
+ * Both specs define the value as bare base64 of the JSON PaymentPayload, and
+ * that is what @x402/fetch, @x402/axios and every other standard client send.
+ * This parser used to accept only a non-standard "x402 " prefix, which our own
+ * self-payment script happened to send, so our tests passed while every real
+ * buyer got a 402 with `malformed_receipt` and was never charged (2026-11-06,
+ * X402-1106). The prefix is still accepted so existing callers keep working.
+ */
 function parseReceiptHeader(header: string): Record<string, unknown> | null {
-  if (!header.startsWith('x402 ')) return null;
+  let encoded = header.trim();
+  if (/^x402 /i.test(encoded)) encoded = encoded.slice(5).trim();
+  if (!encoded || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(encoded)) return null;
   try {
-    const decoded = Buffer.from(header.slice(5), 'base64').toString('utf-8');
+    // Buffer's base64 decoder also reads the base64url alphabet.
+    const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
     const parsed = JSON.parse(decoded);
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? normalizePaymentPayload(parsed)
+      : null;
   } catch {
     return null;
   }
@@ -369,7 +385,11 @@ export async function verifyPayment(
 ): Promise<VerifyOutcome> {
   const receipt = parseReceiptHeader(header);
   if (!receipt) {
-    return { ok: false, reason: 'malformed_receipt', detail: 'Expected "x402 <base64-json>".' };
+    return {
+      ok: false,
+      reason: 'malformed_receipt',
+      detail: 'Expected base64-encoded JSON (an x402 PaymentPayload) in PAYMENT-SIGNATURE or X-PAYMENT.',
+    };
   }
 
   // An EIP-3009 authorization and a transaction hash are both valid receipts.

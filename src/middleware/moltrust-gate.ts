@@ -28,6 +28,28 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 
 export const BINDING_VERSION = 'moltrust-gate/v1';
+
+/**
+ * The prefix nginx strips before this process sees the request.
+ *
+ * `location /guard/ { proxy_pass http://127.0.0.1:3003/; }` -- the trailing
+ * slash removes `/guard` -- so a caller requests
+ * `/guard/api/agent/score/0x…` and this process is handed
+ * `/api/agent/score/0x…`. The proof is bound to the path, and for three
+ * weeks the only path that verified was the internal one: a caller had to
+ * sign a path different from the one it called, and the sole place that was
+ * written down was our own scripts/gate_proof.py.
+ *
+ * did:moltrust:cad78d76790d4a40 has been failing on exactly this since
+ * 2026-10-02 -- 144 `proof_invalid` decisions, every half hour, against its
+ * own registered wallet. So a proof over the path the caller actually used
+ * is accepted too. Nothing is widened by it: the two candidates differ only
+ * in this prefix, so a proof minted for one route still cannot be presented
+ * at another.
+ *
+ * Empty disables the second candidate.
+ */
+export const PUBLIC_PREFIX = process.env.GATE_PUBLIC_PREFIX ?? '/guard';
 export const DEFAULT_MAX_AGE_SECONDS = 300;
 
 export const HEADER_ATTESTATION = 'x-moltrust-attestation';
@@ -258,7 +280,8 @@ export function bindingString(
   );
 }
 
-function verifyProof(
+/** Exported so the path-binding rules can be tested without a server. */
+export function verifyProof(
   att: GateAttestation, method: string, path: string, timestamp: string,
   proofB64: string, maxAgeSeconds: number, now?: number,
 ): string | null {
@@ -283,8 +306,22 @@ function verifyProof(
   } catch (err) {
     return `proof is not base64url: ${(err as Error).message}`;
   }
-  const ok = crypto.verify(null, bindingString(method, path, att.did, timestamp), key, signature);
-  return ok ? null : 'proof does not verify under the attested public key';
+  // The path as this process sees it, and the path the caller used. See
+  // PUBLIC_PREFIX for why both are accepted.
+  const candidates = PUBLIC_PREFIX && !path.startsWith(PUBLIC_PREFIX)
+    ? [path, PUBLIC_PREFIX + path]
+    : [path];
+  for (const candidate of candidates) {
+    if (crypto.verify(null, bindingString(method, candidate, att.did, timestamp), key, signature)) {
+      return null;
+    }
+  }
+  // Name what was tried. The previous message said only that the proof did
+  // not verify, which is true of a wrong key, a wrong path and a wrong
+  // timestamp alike, and left the caller nothing to correct.
+  return 'proof does not verify under the attested public key. sign '
+    + `"${BINDING_VERSION}\\nMETHOD\\nPATH\\nDID\\nTIMESTAMP"; PATH tried: `
+    + candidates.map((c) => JSON.stringify(c)).join(' or ');
 }
 
 function header(headers: HeaderBag, name: string): string {

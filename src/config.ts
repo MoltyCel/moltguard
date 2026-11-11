@@ -1,14 +1,15 @@
 import { config } from 'dotenv';
+import { configuredPaymentAddress } from './paymentAddress.js';
 config();
 
-const isTestnet = !process.env.MOLTGUARD_WALLET;
+// Mainnet when a receiving address is configured (BASE_ADDR, see paymentAddress.ts).
+const isTestnet = configuredPaymentAddress() === null;
 if (isTestnet) {
-  console.warn('[MoltGuard] ⚠️  MOLTGUARD_WALLET not set — running in TESTNET mode (Base Sepolia)');
+  console.warn('[MoltGuard] ⚠️  BASE_ADDR not set — running in TESTNET mode (Base Sepolia)');
 }
 
 export const CONFIG = {
   port: parseInt(process.env.PORT || '3000'),
-  wallet: process.env.MOLTGUARD_WALLET || '0x0000000000000000000000000000000000000000',
   baseRpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
   basescanApiKey: process.env.BASESCAN_API_KEY || null,
   facilitatorUrl: process.env.FACILITATOR_URL || 'https://x402.org/facilitator',

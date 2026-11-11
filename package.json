@@ -1,6 +1,6 @@
 {
   "name": "moltguard",
-  "version": "1.3.0",
+  "version": "1.6.0",
   "description": "All-in-One Trust & Integrity Service for the x402 Agent Economy",
   "type": "module",
   "scripts": {
@@ -39,5 +39,19 @@
     "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "@x402/core": {
+      "zod": "^4.6.6"
+    },
+    "@x402/evm": {
+      "zod": "^4.6.6"
+    },
+    "@x402/extensions": {
+      "zod": "^4.6.6"
+    },
+    "@x402/hono": {
+      "zod": "^4.6.6"
+    }
   }
 }
