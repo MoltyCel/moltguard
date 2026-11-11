@@ -150,7 +150,10 @@ describe('registerPublicKey', () => {
     if (!replay.registered) expect(replay.error).toBe('nonce_already_used');
   });
 
-  it('locks first-time registration when no key is on record (E1)', async () => {
+  it('refuses first-time registration without an owner credential (E1)', async () => {
+    // The E1 lock became an owner channel: a caller that cannot show the API
+    // key bound to the DID is still refused, it just gets told what is missing.
+    // The channel itself is covered in challenge.owner-channel.test.ts.
     const fresh = makeKeypair();
     world.agentRow = { public_key_hex: null };
 
@@ -158,8 +161,8 @@ describe('registerPublicKey', () => {
 
     expect(result.registered).toBe(false);
     if (!result.registered) {
-      expect(result.error).toBe('first_registration_locked');
-      expect(result.status).toBe(403);
+      expect(result.error).toBe('owner_key_required');
+      expect(result.status).toBe(401);
     }
     expect(updates.filter((u) => u.text.includes('UPDATE agents'))).toHaveLength(0);
   });

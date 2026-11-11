@@ -62,12 +62,15 @@ app.post('/verify-binding', async (c) => {
   }
 });
 
-// POST /vc/register-key — Replace the public key of an agent DID.
+// POST /vc/register-key — Set or replace the public key of an agent DID.
 //
-// Replacing requires proof of possession of the key currently on record:
+// No key on record yet: authorised by the API key bound to the DID, sent as
+// X-API-Key (E1 owner channel). Works exactly once per DID.
+//
+// Key already on record: requires proof of possession of that key —
 //   proof: { nonce, signatureB64url }
 // where nonce comes from GET /vc/challenge?did=<did> and the signature is made
-// with the CURRENT key. First-time registration is closed here (E1).
+// with the CURRENT key. An API key grants nothing on this path.
 app.post('/register-key', async (c) => {
   const body = await c.req.json().catch(() => ({} as any));
   const { did, publicKeyHex, proof } = body;
@@ -79,7 +82,9 @@ app.post('/register-key', async (c) => {
     return c.json({ error: 'validation_error', message: 'publicKeyHex is required (64 hex chars, Ed25519)' }, 422);
   }
 
-  const result = await registerPublicKey(did, publicKeyHex, proof ?? null);
+  const apiKey = c.req.header('X-API-Key') ?? c.req.header('x-api-key') ?? null;
+
+  const result = await registerPublicKey(did, publicKeyHex, proof ?? null, apiKey);
   if (!result.registered) {
     return c.json({ error: result.error, message: result.detail }, result.status as any);
   }
@@ -88,7 +93,7 @@ app.post('/register-key', async (c) => {
     registered: true,
     did,
     algorithm: 'Ed25519',
-    message: 'Public key replaced. You can now use /vc/verify-binding to prove holder binding.',
+    message: 'Public key registered. You can now use /vc/verify-binding to prove holder binding.',
   });
 });
 
