@@ -88,7 +88,7 @@ describe('the MolTrust discount', () => {
       const discounted = Number((list * (1 - DISCOUNT)).toFixed(6));
       expect(discounted, key).toBeLessThan(list);
       expect(discounted, key).toBeCloseTo(list * 0.8, 6);
-      // The cheapest route is 0.05 USDC; at six decimals 0.04 is exact, so no
+      // The cheapest route is 0.01 USDC; at six decimals 0.008 is exact, so no
       // price collapses to zero and none gains a rounding cent.
       expect(discounted, key).toBeGreaterThan(0);
     }
@@ -98,8 +98,8 @@ describe('the MolTrust discount', () => {
     expect(Number((X402_PRICES['POST /vc/skill/issue'] * 0.8).toFixed(6))).toBe(4);
   });
 
-  it('prices the 0.05 read routes at 0.04', () => {
-    expect(Number((X402_PRICES['GET /api/agent/score'] * 0.8).toFixed(6))).toBe(0.04);
+  it('prices the 0.01 read routes at 0.008', () => {
+    expect(Number((X402_PRICES['GET /api/agent/score'] * 0.8).toFixed(6))).toBe(0.008);
   });
 
   it('starts with an empty counter and reports a zero share, not NaN', () => {

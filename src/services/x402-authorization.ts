@@ -57,6 +57,36 @@ const HEX_32 = /^0x[0-9a-fA-F]{64}$/;
 const HEX_SIG = /^0x[0-9a-fA-F]{130}$/; // r + s + v
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 
+/** v1 network names, as X-PAYMENT carries them, to the CAIP-2 ids v2 uses. */
+const V1_NETWORKS: Record<string, string> = {
+  base: 'eip155:8453',
+  'base-sepolia': 'eip155:84532',
+};
+
+/**
+ * Bring a v1 PaymentPayload into the v2 shape the checks below read.
+ *
+ * v1 (X-PAYMENT) states `scheme` and `network` at the top level and names the
+ * network ("base"); v2 (PAYMENT-SIGNATURE) echoes the offer it took as
+ * `accepted` with a CAIP-2 id. The signed EIP-3009 authorization underneath is
+ * the same in both, so only the envelope is rewritten. A payload that already
+ * carries `accepted`, or none of the v1 fields, is returned unchanged.
+ */
+export function normalizePaymentPayload(value: Record<string, unknown>): Record<string, unknown> {
+  if ('accepted' in value) return value;
+  const scheme = value.scheme;
+  const network = value.network;
+  if (typeof scheme !== 'string' || typeof network !== 'string') return value;
+  const inner = value.payload;
+  if (!inner || typeof inner !== 'object' || !('authorization' in (inner as Record<string, unknown>))) {
+    return value;
+  }
+  return {
+    ...value,
+    accepted: { scheme, network: V1_NETWORKS[network] ?? network },
+  };
+}
+
 /** Does this decoded receipt carry an authorization rather than a tx hash? */
 export function isAuthorizationPayload(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
