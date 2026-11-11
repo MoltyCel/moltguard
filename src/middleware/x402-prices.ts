@@ -1,28 +1,128 @@
 // x402 Price Table — all prices in USDC on Base
+//
+// Checks cost what the credit rail charges for comparable work: 1 credit =
+// 0.01 USDC (/credits/deposit-info), reads 1 credit, heavier checks and the
+// signed trust credential 2. VC issuance stays at 5.00. A paid plan covers the
+// reads (services/plan-coverage.ts). Changed 2026-11-03, PRICING-KOHAERENZ;
+// before: 0.05 / 0.10.
 // Matched to actual MoltGuard route paths
 
 export const X402_PRICES: Record<string, number> = {
   // MoltGuard Core (paid)
-  'GET /api/agent/score':       0.05,
-  'GET /api/agent/detail':      0.05,
-  'GET /api/sybil/scan':        0.10,
-  'GET /api/market/check':      0.05,
-  'POST /api/credential/issue': 0.10,
+  'GET /api/agent/score':       0.01,
+  'GET /api/agent/detail':      0.01,
+  'GET /api/sybil/scan':        0.02,
+  'GET /api/market/check':      0.01,
+  'POST /api/credential/issue': 0.02,
 
   // Skill Verification
   'POST /vc/skill/issue':       5.00,
 
   // Prediction Markets
-  'GET /prediction/integrity':  0.10,  // prefix match for /prediction/integrity/:market_id
+  'GET /prediction/integrity':  0.02,  // prefix match for /prediction/integrity/:market_id
   'POST /vc/prediction/issue':  5.00,
 
   // MoltRadar — operator clusters (clusters + operators are free, see X402_FREE_PATHS)
-  'GET /radar/market':          0.05,  // prefix match for /radar/market/:id
+  'GET /radar/market':          0.01,  // prefix match for /radar/market/:id
 
   // Shopping & Travel VC issuance
   'POST /vc/buyer-agent/issue': 5.00,
   'POST /vc/travel-agent/issue': 5.00,
 };
+
+/**
+ * Which price entry governs this request, by its key.
+ *
+ * Exact match first, then a prefix match on a path boundary, so
+ * "GET /api/agent/score/0x…" resolves to "GET /api/agent/score" while
+ * "/api/agent/score-free" does not.
+ *
+ * The key is returned rather than the price because two things need the same
+ * answer: what to charge, and which catalogue entry describes the endpoint. Two
+ * copies of this matching drifted into disagreeing once already — a bare
+ * startsWith matched the free routes against their paid prefixes — so there is
+ * one matcher and both callers read it.
+ */
+/**
+ * The one path spelling everything here is keyed by.
+ *
+ * `decodeURIComponent` throws on a malformed escape; the caller turns that into
+ * a 400 rather than pricing a path it could not read. Decoding happens exactly
+ * once — a second pass would let %2561 arrive as %61 and then as `a`, which is
+ * the same mismatch one layer further in.
+ *
+ * Duplicate slashes collapse and a trailing slash is dropped, because
+ * /api/agent/score/ and //api/agent/score reach the same handler and must
+ * reach the same price.
+ */
+export function normalizePath(rawPathname: string): string {
+  const decoded = decodeURIComponent(rawPathname);
+  const collapsed = decoded.replace(/\/{2,}/g, '/');
+  return collapsed.length > 1 ? collapsed.replace(/\/+$/, '') : collapsed;
+}
+
+/** Every path prefix that carries a price, in any method. */
+export const PRICED_PREFIXES: readonly string[] = Array.from(
+  new Set(Object.keys(X402_PRICES).map((k) => k.split(' ')[1])),
+);
+
+/**
+ * Is this path inside a part of the tree that is for sale?
+ *
+ * Used for the deny-by-default branch: under a priced prefix, a path with no
+ * price entry is refused instead of served. Free paths are checked before this
+ * is ever called, so /api/agent/score-free does not reach it.
+ */
+export function isUnderPricedPrefix(path: string): boolean {
+  return PRICED_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
+}
+
+/**
+ * Priced routes whose last path segment is a wallet address. The handlers
+ * reject anything else with 400, but they run after the middleware, so a buyer
+ * who sent /api/agent/detail/0 was quoted a price — and, once paid, would have
+ * been charged for a 400. The middleware checks the same thing first.
+ */
+export const ADDRESS_PARAM_ROUTES: readonly string[] = [
+  'GET /api/agent/score',
+  'GET /api/agent/detail',
+  'GET /api/sybil/scan',
+];
+
+/**
+ * What a discovery crawler sends: the route template with its placeholder left
+ * in, as the OpenAPI document and the bazaar routeTemplate spell it. Indexers
+ * read the 402 at that URL to learn the price, so it keeps its challenge; it is
+ * never paid for, see addressParamProblem.
+ */
+const TEMPLATE_PLACEHOLDER = /^(\{address\}|:address|<address>)$/i;
+
+export type AddressParamCheck = 'ok' | 'invalid' | 'template' | 'not_applicable';
+
+/**
+ * Does this priced request carry a usable address where the route needs one?
+ * `key` is the matchPriceKey() result for the request.
+ */
+export function addressParamProblem(key: string | null, path: string): AddressParamCheck {
+  if (key === null || !ADDRESS_PARAM_ROUTES.includes(key)) return 'not_applicable';
+  const prefix = key.split(' ')[1];
+  const rest = path === prefix ? '' : path.slice(prefix.length + 1);
+  if (/^0x[a-fA-F0-9]{40}$/.test(rest)) return 'ok';
+  if (TEMPLATE_PLACEHOLDER.test(rest)) return 'template';
+  return 'invalid';
+}
+
+export function matchPriceKey(method: string, path: string): string | null {
+  const exact = `${method} ${path}`;
+  if (X402_PRICES[exact] !== undefined) return exact;
+
+  for (const pattern of Object.keys(X402_PRICES)) {
+    const [pMethod, pPath] = pattern.split(' ');
+    if (method !== pMethod) continue;
+    if (path === pPath || path.startsWith(pPath + '/')) return pattern;
+  }
+  return null;
+}
 
 // Endpoints that are ALWAYS free (never block) — matched by prefix
 export const X402_FREE_PATHS = [

@@ -22,8 +22,10 @@ import {
   buildResourceInfo,
   checkAuthorization,
   isAuthorizationPayload,
+  normalizePaymentPayload,
 } from './x402-authorization.js';
 import { settle } from './x402-facilitator.js';
+import { buildExtensions } from './x402-bazaar.js';
 
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const USDC_DECIMALS = 6;
@@ -107,12 +109,27 @@ async function releaseTxHash(txHash: string): Promise<void> {
   }
 }
 
+/**
+ * Decode a PAYMENT-SIGNATURE (v2) or X-PAYMENT (v1) header.
+ *
+ * Both specs define the value as bare base64 of the JSON PaymentPayload, and
+ * that is what @x402/fetch, @x402/axios and every other standard client send.
+ * This parser used to accept only a non-standard "x402 " prefix, which our own
+ * self-payment script happened to send, so our tests passed while every real
+ * buyer got a 402 with `malformed_receipt` and was never charged (2026-11-06,
+ * X402-1106). The prefix is still accepted so existing callers keep working.
+ */
 function parseReceiptHeader(header: string): Record<string, unknown> | null {
-  if (!header.startsWith('x402 ')) return null;
+  let encoded = header.trim();
+  if (/^x402 /i.test(encoded)) encoded = encoded.slice(5).trim();
+  if (!encoded || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(encoded)) return null;
   try {
-    const decoded = Buffer.from(header.slice(5), 'base64').toString('utf-8');
+    // Buffer's base64 decoder also reads the base64url alphabet.
+    const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
     const parsed = JSON.parse(decoded);
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? normalizePaymentPayload(parsed)
+      : null;
   } catch {
     return null;
   }
@@ -248,6 +265,7 @@ async function settleAuthorization(
   expectedPrice: number,
   path: string,
   recipient: string,
+  method: string,
 ): Promise<VerifyOutcome> {
   const checked = checkAuthorization(decoded, expectedPrice, recipient, CONFIG.network);
   if (!checked.ok) {
@@ -268,12 +286,19 @@ async function settleAuthorization(
   // resource and accepted at the top, the scheme's own payload underneath.
   // What the caller sent is normalised rather than forwarded, so a client that
   // echoes a stale or edited offer cannot smuggle it past us into settlement.
+  // The catalogue entry is written from this payload, not from the challenge.
+  // The extension is rebuilt here rather than taken from what the caller
+  // echoed, for the same reason `accepted` is: a payer must not get to write
+  // our listing. A client that ignored the extension entirely still registers
+  // the endpoint by paying for it.
+  const extensions = buildExtensions(method, path);
   const settled = await settle(
     {
       x402Version: 2,
-      resource: buildResourceInfo(path),
+      resource: buildResourceInfo(method, path),
       accepted: requirements,
       payload: checked.payload.payload,
+      ...(extensions ? { extensions } : {}),
     },
     requirements,
   );
@@ -354,17 +379,24 @@ export async function verifyPayment(
   expectedPrice: number,
   path: string,
   recipient: string,
+  // Only the bazaar extension needs this, and only on the settlement path. It
+  // defaults so the existing callers and tests keep their four arguments.
+  method: string = 'GET',
 ): Promise<VerifyOutcome> {
   const receipt = parseReceiptHeader(header);
   if (!receipt) {
-    return { ok: false, reason: 'malformed_receipt', detail: 'Expected "x402 <base64-json>".' };
+    return {
+      ok: false,
+      reason: 'malformed_receipt',
+      detail: 'Expected base64-encoded JSON (an x402 PaymentPayload) in PAYMENT-SIGNATURE or X-PAYMENT.',
+    };
   }
 
   // An EIP-3009 authorization and a transaction hash are both valid receipts.
   // They are told apart by shape, so a caller never has to declare which path
   // it is using.
   if (isAuthorizationPayload(receipt)) {
-    return settleAuthorization(receipt, expectedPrice, path, recipient);
+    return settleAuthorization(receipt, expectedPrice, path, recipient, method);
   }
 
   const rawHash = String(receipt.txHash ?? receipt.transactionHash ?? '');

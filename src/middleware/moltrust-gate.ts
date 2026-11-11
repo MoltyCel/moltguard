@@ -1,0 +1,451 @@
+/**
+ * Offline MolTrust gate — vendored from `@moltrust/x402` 2.0.0.
+ *
+ * VENDORED COPY. The reference lives in the moltrust-api repository at
+ * `packages/x402/index.js` and will be published as `@moltrust/x402`. Until it
+ * is on npm this repository cannot import it, so the logic is duplicated here.
+ *
+ * Duplicated security logic drifts, and the drift is invisible because each
+ * copy passes its own tests. So the reference emits fixed vectors —
+ * `moltrust-gate.vectors.json`, constant key seeds and a pinned clock — and
+ * this port replays every one of them in `moltrust-gate.test.ts`. Changing
+ * behaviour here without regenerating there fails the build.
+ *
+ * What it does: a caller presents a MolTrust-signed attestation and a
+ * signature made with its own key. Both are checked against a JWKS this
+ * process already holds. **No network call in the request path** — an outage
+ * at MolTrust must not become latency in MoltGuard.
+ *
+ * `allowTrackRecord` is the one way past a withheld score, and it is off until
+ * a host turns it on. An agent that has bound a wallet and holds an anchored
+ * TrackRecordCredential carries a `track_record` object in its attestation;
+ * with the option on, that object stands in for the score. It exists because
+ * every newly registered agent has a withheld score and no way to earn one —
+ * Phase 2 needs three endorsers, and an agent nobody has met yet has none.
+ */
+
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+
+export const BINDING_VERSION = 'moltrust-gate/v1';
+
+/**
+ * The prefix nginx strips before this process sees the request.
+ *
+ * `location /guard/ { proxy_pass http://127.0.0.1:3003/; }` -- the trailing
+ * slash removes `/guard` -- so a caller requests
+ * `/guard/api/agent/score/0x…` and this process is handed
+ * `/api/agent/score/0x…`. The proof is bound to the path, and for three
+ * weeks the only path that verified was the internal one: a caller had to
+ * sign a path different from the one it called, and the sole place that was
+ * written down was our own scripts/gate_proof.py.
+ *
+ * did:moltrust:cad78d76790d4a40 has been failing on exactly this since
+ * 2026-10-02 -- 144 `proof_invalid` decisions, every half hour, against its
+ * own registered wallet. So a proof over the path the caller actually used
+ * is accepted too. Nothing is widened by it: the two candidates differ only
+ * in this prefix, so a proof minted for one route still cannot be presented
+ * at another.
+ *
+ * Empty disables the second candidate.
+ */
+export const PUBLIC_PREFIX = process.env.GATE_PUBLIC_PREFIX ?? '/guard';
+export const DEFAULT_MAX_AGE_SECONDS = 300;
+
+export const HEADER_ATTESTATION = 'x-moltrust-attestation';
+export const HEADER_TIMESTAMP = 'x-moltrust-timestamp';
+export const HEADER_PROOF = 'x-moltrust-proof';
+
+export interface Jwk {
+  kty: string;
+  crv: string;
+  kid: string;
+  x: string;
+  use?: string;
+  alg?: string;
+}
+
+export interface Jwks { keys: Jwk[] }
+
+export interface TrackRecord {
+  /** When the TrackRecordCredential was issued, RFC 3339. */
+  issued_at: string;
+  /** Base transaction that anchors it, 0x + 64 hex. */
+  anchor_tx: string;
+}
+
+export interface GateAttestation {
+  did: string;
+  publicKey: string;
+  trustScore: number | null;
+  withheld: boolean;
+  credentialTypes: string[];
+  computedAt: string;
+  validUntil: string;
+  policyVersion: string;
+  /** Present when the DID holds an anchored TrackRecordCredential. */
+  trackRecord: TrackRecord | null;
+  version: number;
+}
+
+export type DenialReason =
+  | 'attestation_missing' | 'proof_missing' | 'attestation_invalid'
+  | 'proof_invalid' | 'proof_replayed' | 'score_withheld'
+  | 'score_missing' | 'score_below_minimum' | 'track_record_invalid'
+  | 'credential_missing';
+
+export interface Decision {
+  allowed: boolean;
+  reason: DenialReason | 'ok';
+  detail: string;
+  did?: string;
+  trustScore?: number | null;
+  credentialTypes?: string[];
+  /** On an allow: which requirement carried it. Absent on a denial. */
+  via?: 'score' | 'track_record';
+  trackRecord?: TrackRecord | null;
+}
+
+export interface GateOptions {
+  minScore?: number | null;
+  credentialType?: string | null;
+  requiredCredentials?: string[];
+  jwks: Jwks | string;
+  maxAgeSeconds?: number;
+  allowWithheld?: boolean;
+  /**
+   * Accept an anchored TrackRecordCredential in place of a score. Off by
+   * default: flipping it would weaken every gate already deployed without its
+   * operator asking.
+   */
+  allowTrackRecord?: boolean;
+  seen?: (proof: string) => boolean;
+}
+
+type HeaderBag = Record<string, string | string[] | undefined>
+  | { get(name: string): string | undefined | null };
+
+// --------------------------------------------------------------------------
+
+function b64urlDecode(value: string): Buffer {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error('empty base64url value');
+  }
+  return Buffer.from(value, 'base64url');
+}
+
+function b64urlEncode(buf: Buffer): string {
+  return Buffer.from(buf).toString('base64url');
+}
+
+/**
+ * Read a JWKS from a path, or accept one already in memory. Deliberately not a
+ * fetch: refreshing the key set is an operational step with its own schedule,
+ * and an HTTP call here would undo the property this module is for.
+ *
+ * Published at https://api.moltrust.ch/.well-known/jwks.json
+ */
+export function loadJwks(pathOrObject: Jwks | string): Jwks {
+  const jwks: Jwks = typeof pathOrObject === 'string'
+    ? JSON.parse(fs.readFileSync(pathOrObject, 'utf8'))
+    : pathOrObject;
+  if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
+    throw new Error('JWKS has no keys[]');
+  }
+  return jwks;
+}
+
+function keyForKid(jwks: Jwks, kid: string): crypto.KeyObject {
+  const jwk = jwks.keys.find((k) => k.kid === kid);
+  if (!jwk) {
+    throw new Error(
+      `no key for kid ${JSON.stringify(kid)} in the JWKS — refresh it, or the `
+      + 'token was not issued by this registry',
+    );
+  }
+  if (jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519') {
+    throw new Error(`unsupported key: kty=${jwk.kty} crv=${jwk.crv}`);
+  }
+  return crypto.createPublicKey({
+    key: { kty: 'OKP', crv: 'Ed25519', x: jwk.x },
+    format: 'jwk',
+  });
+}
+
+function keyFromHex(hex: string): crypto.KeyObject {
+  const raw = Buffer.from(hex, 'hex');
+  if (raw.length !== 32) throw new Error(`public_key must be 32 bytes, got ${raw.length}`);
+  return crypto.createPublicKey({
+    key: { kty: 'OKP', crv: 'Ed25519', x: b64urlEncode(raw) },
+    format: 'jwk',
+  });
+}
+
+/** Verify a compact JWS gate attestation. Throws with the reason. */
+export function verifyAttestation(token: string, jwks: Jwks, now?: number): GateAttestation {
+  if (typeof token !== 'string') throw new Error('attestation is not a string');
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    throw new Error(`not a compact JWS: ${parts.length} parts, expected 3`);
+  }
+  const [headerB64, payloadB64, sigB64] = parts;
+
+  const header = JSON.parse(b64urlDecode(headerB64).toString('utf8'));
+  if (header.alg !== 'EdDSA') throw new Error(`alg=${header.alg}, expected EdDSA`);
+  if (!header.kid) throw new Error('header carries no kid');
+
+  const key = keyForKid(jwks, header.kid);
+  const ok = crypto.verify(
+    null, Buffer.from(`${headerB64}.${payloadB64}`, 'ascii'), key, b64urlDecode(sigB64),
+  );
+  if (!ok) throw new Error('signature does not cover this payload');
+
+  const payload = JSON.parse(b64urlDecode(payloadB64).toString('utf8'));
+  if (payload === null || typeof payload !== 'object') {
+    throw new Error('payload is not an object');
+  }
+  if (payload.v !== 2) {
+    throw new Error(
+      `payload version ${JSON.stringify(payload.v)} is not a gate attestation — `
+      + 'the v1 trust-score payload carries no public key and cannot gate anything',
+    );
+  }
+  for (const required of ['did', 'public_key', 'valid_until']) {
+    if (!payload[required]) throw new Error(`payload has no ${required}`);
+  }
+
+  const validUntil = Date.parse(payload.valid_until);
+  if (Number.isNaN(validUntil)) {
+    throw new Error(`not an RFC 3339 timestamp: ${payload.valid_until}`);
+  }
+  const current = now === undefined ? Date.now() : now;
+  if (current > validUntil) {
+    throw new Error(`expired at ${payload.valid_until}; ask the agent for a fresh one`);
+  }
+
+  return {
+    did: payload.did,
+    publicKey: payload.public_key,
+    trustScore: payload.trust_score === undefined ? null : payload.trust_score,
+    withheld: Boolean(payload.withheld),
+    credentialTypes: payload.credential_types || [],
+    computedAt: payload.computed_at || '',
+    validUntil: payload.valid_until,
+    policyVersion: payload.policy_version || '',
+    trackRecord: payload.track_record === undefined ? null : payload.track_record,
+    version: payload.v,
+  };
+}
+
+const ANCHOR_TX_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Check the `track_record` object's shape. Returns a reason on a problem, null
+ * when it is usable.
+ *
+ * The signature over the attestation already covers these bytes, so a caller
+ * cannot forge them without the registry key. What is checked here is that the
+ * issuer put something a relying party can act on: a moment, and a transaction
+ * to look up. Confirming the anchor on chain is a network call, and this module
+ * makes none.
+ */
+export function checkTrackRecord(tr: unknown): string | null {
+  if (tr === null || typeof tr !== 'object' || Array.isArray(tr)) {
+    return 'track_record is not an object';
+  }
+  const rec = tr as Record<string, unknown>;
+  if (!rec.issued_at) return 'track_record has no issued_at';
+  if (Number.isNaN(Date.parse(String(rec.issued_at)))) {
+    return `track_record.issued_at is not an RFC 3339 timestamp: ${rec.issued_at}`;
+  }
+  if (!rec.anchor_tx) return 'track_record has no anchor_tx';
+  if (!ANCHOR_TX_PATTERN.test(String(rec.anchor_tx))) {
+    return 'track_record.anchor_tx is not a 32-byte hex transaction hash';
+  }
+  return null;
+}
+
+/**
+ * What the calling agent signs. Method, path, DID and moment, newline
+ * separated. Each element stops a specific reuse: a proof made for a free
+ * route replayed against a paid one, a proof lifted from one agent and
+ * presented by another, a proof kept and used tomorrow.
+ */
+export function bindingString(
+  method: string, path: string, did: string, timestamp: string | number,
+): Buffer {
+  return Buffer.from(
+    [BINDING_VERSION, String(method).toUpperCase(), path, did, String(timestamp)].join('\n'),
+    'utf8',
+  );
+}
+
+/** Exported so the path-binding rules can be tested without a server. */
+export function verifyProof(
+  att: GateAttestation, method: string, path: string, timestamp: string,
+  proofB64: string, maxAgeSeconds: number, now?: number,
+): string | null {
+  const ts = Number(String(timestamp).trim());
+  if (!Number.isFinite(ts)) return `timestamp ${JSON.stringify(timestamp)} is not a number`;
+  const current = (now === undefined ? Date.now() : now) / 1000;
+  const age = current - ts;
+  if (age > maxAgeSeconds) return `proof is ${Math.round(age)}s old, limit ${maxAgeSeconds}s`;
+  if (age < -maxAgeSeconds) {
+    return `proof is ${Math.round(-age)}s in the future, limit ${maxAgeSeconds}s`;
+  }
+
+  let key: crypto.KeyObject;
+  try {
+    key = keyFromHex(att.publicKey);
+  } catch (err) {
+    return `public_key in the attestation is unusable: ${(err as Error).message}`;
+  }
+  let signature: Buffer;
+  try {
+    signature = b64urlDecode(proofB64);
+  } catch (err) {
+    return `proof is not base64url: ${(err as Error).message}`;
+  }
+  // The path as this process sees it, and the path the caller used. See
+  // PUBLIC_PREFIX for why both are accepted.
+  const candidates = PUBLIC_PREFIX && !path.startsWith(PUBLIC_PREFIX)
+    ? [path, PUBLIC_PREFIX + path]
+    : [path];
+  for (const candidate of candidates) {
+    if (crypto.verify(null, bindingString(method, candidate, att.did, timestamp), key, signature)) {
+      return null;
+    }
+  }
+  // Name what was tried. The previous message said only that the proof did
+  // not verify, which is true of a wrong key, a wrong path and a wrong
+  // timestamp alike, and left the caller nothing to correct.
+  return 'proof does not verify under the attested public key. sign '
+    + `"${BINDING_VERSION}\\nMETHOD\\nPATH\\nDID\\nTIMESTAMP"; PATH tried: `
+    + candidates.map((c) => JSON.stringify(c)).join(' or ');
+}
+
+function header(headers: HeaderBag, name: string): string {
+  if (!headers) return '';
+  const bag = headers as { get?: (n: string) => string | undefined | null };
+  if (typeof bag.get === 'function') return bag.get(name) || '';
+  const record = headers as Record<string, string | string[] | undefined>;
+  const direct = record[name];
+  if (direct) return String(direct);
+  for (const [k, v] of Object.entries(record)) {
+    if (k.toLowerCase() === name && v) return String(v);
+  }
+  return '';
+}
+
+function deny(reason: DenialReason, detail: string, extra?: Partial<Decision>): Decision {
+  return { allowed: false, reason, detail, ...(extra || {}) };
+}
+
+/**
+ * Build a gate. Returns a decision function; everything that is not an
+ * explicit allow is a denial, including a malformed header and an unknown key
+ * id, and every denial names a reason the caller can act on.
+ */
+export function gateFor(options: GateOptions): (
+  method: string, path: string, headers: HeaderBag, now?: number
+) => Decision {
+  const {
+    minScore = null,
+    credentialType = null,
+    requiredCredentials = [],
+    jwks: rawJwks,
+    maxAgeSeconds = DEFAULT_MAX_AGE_SECONDS,
+    allowWithheld = false,
+    allowTrackRecord = false,
+    seen,
+  } = options;
+
+  const jwks = loadJwks(rawJwks);
+  const wanted = Array.from(new Set(
+    requiredCredentials.concat(credentialType ? [credentialType] : []),
+  )).sort();
+
+  return function decide(method, path, headers, now): Decision {
+    const token = header(headers, HEADER_ATTESTATION);
+    const proof = header(headers, HEADER_PROOF);
+    const timestamp = header(headers, HEADER_TIMESTAMP);
+
+    if (!token) {
+      return deny('attestation_missing',
+        `send the gate_attestation from GET /skill/trust-score/<did> in ${HEADER_ATTESTATION}. `
+        + 'No DID yet: https://moltrust.ch/developers.html?from=gate');
+    }
+    if (!proof || !timestamp) {
+      return deny('proof_missing', `${HEADER_PROOF} and ${HEADER_TIMESTAMP} are both required`);
+    }
+
+    let att: GateAttestation;
+    try {
+      att = verifyAttestation(token, jwks, now);
+    } catch (err) {
+      return deny('attestation_invalid', (err as Error).message);
+    }
+
+    const problem = verifyProof(att, method, path, timestamp, proof, maxAgeSeconds, now);
+    if (problem) return deny('proof_invalid', problem, { did: att.did });
+
+    if (seen && !seen(proof)) {
+      return deny('proof_replayed', 'this proof has been presented before', { did: att.did });
+    }
+
+    // Whether the score requirement was met by a score or by a track record.
+    // Kept so the caller can count the two paths apart: a gate that cannot say
+    // which door its callers came through cannot tell what the track record is
+    // worth.
+    let via: 'score' | 'track_record' = 'score';
+
+    // A score we have not computed is not a low score, and it is not a pass.
+    // An anchored track record is the one thing that stands in for it.
+    if (att.withheld && !allowWithheld) {
+      if (!allowTrackRecord || att.trackRecord === null) {
+        return deny('score_withheld',
+          'no score has been computed for this agent; that is not a low score, '
+          + 'and this gate does not read it as one',
+          { did: att.did, credentialTypes: att.credentialTypes });
+      }
+      const trProblem = checkTrackRecord(att.trackRecord);
+      if (trProblem) {
+        return deny('track_record_invalid', trProblem,
+          { did: att.did, credentialTypes: att.credentialTypes });
+      }
+      via = 'track_record';
+    }
+
+    // A track record stands in for the score, so there is nothing to compare
+    // against minScore. Comparing anyway would deny every agent it just let
+    // through, on a field the substitute exists because it is empty.
+    if (via === 'score' && minScore !== null && minScore !== undefined) {
+      if (att.trustScore === null) {
+        return deny('score_missing', 'the attestation carries no score to compare',
+          { did: att.did, credentialTypes: att.credentialTypes });
+      }
+      if (att.trustScore < minScore) {
+        return deny('score_below_minimum', `score ${att.trustScore} is below ${minScore}`,
+          { did: att.did, trustScore: att.trustScore, credentialTypes: att.credentialTypes });
+      }
+    }
+
+    const missing = wanted.filter((c) => !att.credentialTypes.includes(c));
+    if (missing.length) {
+      return deny('credential_missing',
+        `holds ${JSON.stringify(att.credentialTypes)}, needs ${JSON.stringify(missing)}`,
+        { did: att.did, trustScore: att.trustScore, credentialTypes: att.credentialTypes });
+    }
+
+    return {
+      allowed: true,
+      reason: 'ok',
+      detail: '',
+      did: att.did,
+      trustScore: att.trustScore,
+      credentialTypes: att.credentialTypes,
+      via,
+      trackRecord: att.trackRecord,
+    };
+  };
+}

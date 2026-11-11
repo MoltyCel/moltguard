@@ -216,14 +216,11 @@ app.post('/vc/skill/issue', async (c) => {
     // Persist to DB (storeVC is now async)
     await storeVC(vc);
 
-    // Anchor on Base L2 (async, non-blocking)
-    anchorSkillVC(skillHash).then(anchor => {
-      if (anchor) {
-        console.log('Skill VC anchored:', anchor.tx, 'block', anchor.block);
-      }
-    }).catch(() => {});
+    // Anchor on Base L2. Awaited so the caller learns what happened: an anchored
+    // credential gets the mined transaction, any other outcome its reason.
+    const anchor = await anchorSkillVC(skillHash);
 
-    return c.json(vc, 201);
+    return c.json({ ...vc, anchor }, 201);
   } catch (e: any) {
     if (e instanceof SkillFetchError) {
       return c.json({ error: e.code, message: e.message }, e.status);

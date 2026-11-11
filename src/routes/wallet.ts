@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { didFormErrorBody, isDidForm } from "../services/did.js";
 import { createPublicClient, http, type Address } from "viem";
 import { base } from "viem/chains";
 import { polygon } from "viem/chains";
@@ -86,6 +87,12 @@ app.post("/api/wallet/attest", async (c) => {
 // GET /api/wallet/attest/:did — Get cached attestation
 app.get("/api/wallet/attest/:did", async (c) => {
   const did = c.req.param("did");
+
+  // 404 used to answer both "this DID has no attestation" and "that is not a
+  // DID", which are different problems with different fixes. A malformed
+  // identifier is a 400 now, and the 404 below means what it says.
+  if (!isDidForm(did)) return c.json(didFormErrorBody("did", did), 400);
+
   const client = await pool.connect();
   try {
     const { rows } = await client.query(

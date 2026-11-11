@@ -1,8 +1,33 @@
 import { Hono } from 'hono';
 import pool from '../services/db.js';
 import { createJWS } from '../services/credential.js';
+import { SIGNAL_TYPE_V2, ATTESTATION_VERSION_CURRENT } from '../services/attestation.js';
+import { disabled, OFF } from '../lib/disabled.js';
 
 const app = new Hono();
+
+/**
+ * How long an authorization decision stays good for.
+ *
+ * One hour by default, and that default is the opinion: a decision that
+ * outlives the constraints it was made under is not a decision, it is a
+ * standing permission somebody forgot to revoke.
+ *
+ * The cap exists because the default alone was too strict for one real case.
+ * A sample attestation handed to a reviewer has to survive being read, and an
+ * hour does not. Seven days is what that needs and is the most this will ever
+ * issue; a caller asking for more gets the cap rather than an error, because
+ * refusing the whole request over an optimistic number helps nobody.
+ */
+export const DEFAULT_VALIDITY_HOURS = 1;
+export const MAX_VALIDITY_HOURS = 24 * 7;
+
+export function validityHours(requested: unknown): number {
+  if (requested === undefined || requested === null) return DEFAULT_VALIDITY_HOURS;
+  const n = Number(requested);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_VALIDITY_HOURS;
+  return Math.min(n, MAX_VALIDITY_HOURS);
+}
 
 function scoreToGrade(score: number): number {
   if (score >= 75) return 3;
@@ -62,21 +87,83 @@ async function resolveDid(did: string): Promise<string> {
     );
     if (agents.length > 0) return agents[0].did;
 
-    return did; // Return original, trust score lookup will handle unknown
+    // A wallet-shaped DID carries an address, and the agents table knows the
+    // addresses. Without this, did:base:0x… and did:pkh:… reached the scoring
+    // endpoint verbatim, which cannot parse them — so an agent we had scored
+    // under its did:moltrust: name came back unscorable when asked for under
+    // the wallet it had bound. Both chains are covered because both occur:
+    // wallet_address holds EVM addresses and Solana base58 alike.
+    const wallet = walletFromDid(did);
+    if (wallet) {
+      const { rows: byWallet } = await client.query(
+        `SELECT did FROM agents WHERE lower(wallet_address) = lower($1) LIMIT 1`,
+        [wallet]
+      );
+      if (byWallet.length > 0) return byWallet[0].did;
+    }
+
+    return did; // still unresolved; fetchTrustScore reports that as `unknown`
   } finally {
     client.release();
   }
 }
 
-async function fetchTrustScore(did: string): Promise<{ score: number; breakdown: any }> {
+/**
+ * The wallet address inside a DID, or null if it does not carry one.
+ *
+ * Deliberately narrow. The last segment of `did:web:example.com` is a
+ * hostname, and looking that up as a wallet would spend a query on every
+ * web DID to learn nothing; requiring the segment to look like an address
+ * keeps the lookup to the cases that can match.
+ */
+export function walletFromDid(did: string): string | null {
+  if (!did || did.startsWith('did:moltrust:')) return null;
+  const last = did.split(':').pop() ?? '';
+  if (/^0x[0-9a-fA-F]{40}$/.test(last)) return last;           // EVM
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(last)) return last;  // Solana base58
+  return null;
+}
+
+/**
+ * A trust score we actually read, or the reason we did not.
+ *
+ * The three cases below used to collapse into `score: 0`, and a zero sits under
+ * the trust floor, so every DID class the scoring endpoint cannot parse came
+ * back as a signed `deny`. That is the opposite of true: we had not evaluated
+ * the subject at all. `did:web`, `did:base` and ERC-8004 identifiers are
+ * exactly the classes affected, which is to say most agents outside our own
+ * namespace.
+ */
+export type TrustScoreResult =
+  | { status: 'ok'; score: number; breakdown: any }
+  | { status: 'unknown'; reason: string }
+  | { status: 'unreachable'; reason: string };
+
+export async function fetchTrustScore(did: string): Promise<TrustScoreResult> {
+  let resp: Response;
   try {
-    const resp = await fetch(`http://localhost:8000/skill/trust-score/${encodeURIComponent(did)}`);
-    if (resp.ok) {
-      const data: any = await resp.json();
-      return { score: data.trust_score ?? 0, breakdown: data.breakdown ?? {} };
+    resp = await fetch(`http://localhost:8000/skill/trust-score/${encodeURIComponent(did)}`);
+  } catch (e) {
+    // We could not ask. Saying "score 0" here would report a measurement we
+    // never took.
+    return { status: 'unreachable', reason: `scoring endpoint unreachable: ${(e as Error).name}` };
+  }
+
+  if (resp.ok) {
+    const data: any = await resp.json();
+    if (typeof data?.trust_score !== 'number') {
+      return { status: 'unknown', reason: 'scoring endpoint returned no trust_score' };
     }
-  } catch {}
-  return { score: 0, breakdown: {} };
+    return { status: 'ok', score: data.trust_score, breakdown: data.breakdown ?? {} };
+  }
+
+  // 400 means the endpoint does not accept this DID format; 404 means it has
+  // never seen the subject. Neither is a statement about the subject's
+  // trustworthiness.
+  if (resp.status === 400 || resp.status === 404) {
+    return { status: 'unknown', reason: `no score available for this DID (HTTP ${resp.status})` };
+  }
+  return { status: 'unreachable', reason: `scoring endpoint returned HTTP ${resp.status}` };
 }
 
 async function fetchAAE(did: string): Promise<any | null> {
@@ -138,6 +225,15 @@ function evaluateCapabilities(
 
 // POST /governance/validate-capabilities
 app.post('/governance/validate-capabilities', async (c) => {
+  // Disabled 2026-10-05. Live probe that day, with no credential of any kind:
+  // agent_did did:base:0x3802… (score 85) returned decision "permit" for both
+  // requested scopes, payments/transfer AND admin/keys, with spend_limit 10000
+  // and a jws signed by our key. `agent_did` is a body field, so the caller
+  // never shows the DID is its own. 28 attestations were issued this way
+  // between 2026-09-20 and 2026-10-05.
+  if (OFF) return disabled(c, 'POST /governance/validate-capabilities issued a signed attestation '
+                   + 'granting arbitrary scopes to any DID named in the body, with no '
+                   + 'holder binding and no authentication.');
   const body = await c.req.json();
   const { agent_did, requested_capabilities, context } = body;
 
@@ -153,16 +249,20 @@ app.post('/governance/validate-capabilities', async (c) => {
 
   const requestedAmount: number | undefined = body.max_amount_usd;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 3600 * 1000);
+  const expiresAt = new Date(now.getTime() + validityHours(body.validity_hours) * 3600 * 1000);
 
   // 1. Resolve DID
   const resolvedDid = await resolveDid(agent_did);
 
   // 2. Fetch trust score
-  const { score, breakdown } = await fetchTrustScore(resolvedDid);
+  const trust = await fetchTrustScore(resolvedDid);
+
+  // Nullable until the withheld branch below has run. The request-level
+  // denials that come first report the score they have, which may be none.
+  const knownScore: number | null = trust.status === 'ok' ? trust.score : null;
 
   // 3. Map to passport grade
-  const passportGrade = scoreToGrade(score);
+  const passportGrade = knownScore === null ? null : scoreToGrade(knownScore);
 
   // 4. Fetch AAE if present
   const aae = await fetchAAE(resolvedDid);
@@ -172,7 +272,8 @@ app.post('/governance/validate-capabilities', async (c) => {
   const restrictedScopes = requestedScopes.filter(isScopeRestricted);
   if (restrictedScopes.length > 0) {
     const attestation = {
-      signal_type: 'governance_attestation',
+      signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
       iss: 'api.moltrust.ch',
       sub: agent_did,
       resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
@@ -188,12 +289,12 @@ app.post('/governance/validate-capabilities', async (c) => {
         trust_floor: 40,
         passport_grade: passportGrade,
       },
-      trust_score: score,
+      trust_score: knownScore,
       delegation_chain_hash: context?.delegation_chain_hash || null,
       evaluation_timestamp: now.toISOString(),
       expires_at: expiresAt.toISOString(),
     };
-    const jws = await createJWS(attestation);
+    const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
     return c.json({ ...attestation, jws });
   }
 
@@ -204,7 +305,8 @@ app.post('/governance/validate-capabilities', async (c) => {
       const ageMs = now.getTime() - evalTime.getTime();
       if (ageMs > TEMPORAL_STALENESS_MS) {
         const attestation = {
-          signal_type: 'governance_attestation',
+          signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
           iss: 'api.moltrust.ch',
           sub: agent_did,
           resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
@@ -220,16 +322,54 @@ app.post('/governance/validate-capabilities', async (c) => {
             trust_floor: 40,
             passport_grade: passportGrade,
           },
-          trust_score: score,
+          trust_score: knownScore,
           delegation_chain_hash: context?.delegation_chain_hash || null,
           evaluation_timestamp: context.evaluation_timestamp,
           expires_at: expiresAt.toISOString(),
         };
-        const jws = await createJWS(attestation);
+        const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
         return c.json({ ...attestation, jws });
       }
     }
   }
+
+  // 6a. No score means no verdict. A withheld attestation is still signed and
+  // still says who asked about whom — it just does not pretend to an answer.
+  // Restricted scope and staleness are properties of the request rather than
+  // of the subject, so those denials run first and stand without a score.
+  if (trust.status !== 'ok') {
+    const attestation = {
+      signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
+      iss: 'api.moltrust.ch',
+      sub: agent_did,
+      resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
+      decision: 'withheld',
+      withheld: true,
+      withheld_reason: trust.reason,
+      withheld_class: trust.status,
+      active_constraints: {
+        scope: [],
+        spend_limit: 0,
+        validity_window: {
+          not_before: now.toISOString(),
+          not_after: expiresAt.toISOString(),
+        },
+        trust_floor: 40,
+        passport_grade: null,
+      },
+      trust_score: null,
+      delegation_chain_hash: context?.delegation_chain_hash || null,
+      evaluation_timestamp: now.toISOString(),
+      expires_at: expiresAt.toISOString(),
+    };
+    const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
+    return c.json({ ...attestation, jws });
+  }
+
+
+  // Past the withheld branch the union is narrowed to 'ok'.
+  const { score, breakdown } = trust;
 
   // 7. Evaluate capabilities (existing AAE / trust-based logic)
   const { scope: permittedScopes, decision: baseDecision } = evaluateCapabilities(capabilities, aae, score);
@@ -248,7 +388,8 @@ app.post('/governance/validate-capabilities', async (c) => {
 
   // 10. Build attestation payload
   const attestation: Record<string, any> = {
-    signal_type: 'governance_attestation',
+    signal_type: SIGNAL_TYPE_V2,
+      attestation_version: ATTESTATION_VERSION_CURRENT,
     iss: 'api.moltrust.ch',
     sub: agent_did,
     resolved_did: resolvedDid !== agent_did ? resolvedDid : undefined,
@@ -274,7 +415,7 @@ app.post('/governance/validate-capabilities', async (c) => {
   }
 
   // 11. Sign with Ed25519
-  const jws = await createJWS(attestation);
+  const jws = await createJWS(attestation, { attestationVersion: ATTESTATION_VERSION_CURRENT });
 
   return c.json({
     ...attestation,

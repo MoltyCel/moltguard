@@ -35,7 +35,7 @@ export async function getBrandByDid(did: string) {
 
 export async function createProduct(
   brandId: string, productId: string, name: string,
-  credentialHash: string, baseAnchor: string
+  credentialHash: string, baseAnchor: string | null
 ) {
   const result = await query(
     `INSERT INTO products (brand_id, product_id, name, credential_hash, base_anchor)

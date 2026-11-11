@@ -1,8 +1,16 @@
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import { query } from '../services/db.js';
-import { X402_PRICES, X402_FREE_PATHS } from './x402-prices.js';
+import {
+  X402_PRICES, X402_FREE_PATHS, matchPriceKey, normalizePath, isUnderPricedPrefix, addressParamProblem,
+} from './x402-prices.js';
 import { verifyPayment } from '../services/x402-verify.js';
 import { buildPaymentRequirements, buildResourceInfo } from '../services/x402-authorization.js';
+import { buildExtensions } from '../services/x402-bazaar.js';
+import { gateFor, type Decision } from './moltrust-gate.js';
+import { gateBlock, parseOperatorDid } from './gate-invite.js';
+import { recordGateDecision } from '../services/gateLog.js';
+import { paymentAddress } from '../paymentAddress.js';
+import { planCovers, FAIR_USE_PER_AGENT_MONTH } from '../services/plan-coverage.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -17,31 +25,89 @@ export function isCredentialIssuance(path: string): boolean {
   return CREDENTIAL_ISSUANCE.some((p) => path === p || path.startsWith(p + '/'));
 }
 
-const MOLTRUST_WALLET = process.env.MOLTGUARD_WALLET ?? '0x380238347e58435f40B4da1F1A045A271D5838F5';
 const BASE_CHAIN_ID = 8453;
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
 
-function getPrice(method: string, path: string): number | null {
-  // Exact match first
-  const key = `${method} ${path}`;
-  if (X402_PRICES[key] !== undefined) return X402_PRICES[key];
+// --- MolTrust discount ----------------------------------------------------
+//
+// A caller that proves a MolTrust identity and a score of at least 50 pays 20 %
+// less. A discount rather than a gate, deliberately: the first measurement of
+// whether verification is worth anything must not cost a single sale. Nobody is
+// turned away, the price moves.
+//
+// allowWithheld stays false. An agent we have never evaluated gets the full
+// price — a withheld score is not a low score, and it is not a reason to charge
+// less either.
+//
+// allowTrackRecord is true, and it is the way in for an agent that has just
+// arrived. Phase 2 withholds a score under three endorsers, and no agent in the
+// registry has three, so for the first eleven months of this gate the discount
+// was unreachable by anyone who was not already us: 643 priced requests, zero
+// discounts. An anchored TrackRecordCredential over a bound Base wallet stands
+// in for the score. It costs the agent a wallet with its own history, which is
+// what a throwaway identity does not have.
+const GATE_MIN_SCORE = Number(process.env.MOLTRUST_GATE_MIN_SCORE ?? 50);
+const GATE_DISCOUNT = Number(process.env.MOLTRUST_GATE_DISCOUNT ?? 0.20);
+const GATE_JWKS_PATH = process.env.MOLTRUST_JWKS_PATH ?? '/etc/moltrust/jwks.json';
+// On unless explicitly switched off, because here the whole point is to reach
+// agents that cannot have a score yet. The library default is the other way
+// round; a host that has not thought about it should not be opted in.
+const GATE_ALLOW_TRACK_RECORD = process.env.MOLTRUST_GATE_ALLOW_TRACK_RECORD !== 'false';
+// Whoever runs this gate, named as the referrer in the 402 invitation. Unset
+// or malformed means no invitation; see gate-invite.ts for why there is no
+// fallback.
+const GATE_OPERATOR_DID = parseOperatorDid(process.env.MOLTRUST_GATE_OPERATOR_DID);
 
-  // Prefix match on a path boundary (e.g. "GET /api/agent/score" matches
-  // "/api/agent/score/:address").
-  //
-  // A bare startsWith also matched "/api/agent/score-free" against
-  // "/api/agent/score", and "/api/market/check-free" against
-  // "/api/market/check". Both are free endpoints that only stayed free because
-  // isFree() happens to run first — a free route that shares a prefix with a
-  // priced one should not depend on the order of two checks in another
-  // function.
-  for (const [pattern, price] of Object.entries(X402_PRICES)) {
-    const [pMethod, pPath] = pattern.split(' ');
-    if (method !== pMethod) continue;
-    if (path === pPath || path.startsWith(pPath + '/')) return price;
+/** Share of priced requests that earned the discount. Read by /health. */
+export const gateStats = {
+  priced: 0,
+  discounted: 0,
+  // Split by which requirement carried the allow. Without it the first track
+  // record and the first real score look identical in the counter, and the
+  // question the discount was built to answer — is a track record worth a
+  // discount — has no number behind it.
+  discountedVia: { score: 0, track_record: 0 } as Record<string, number>,
+  denied: {} as Record<string, number>,
+  // 402s that went out carrying an invitation. Since start; the daily figure
+  // comes from gate_decisions.invited.
+  invited: 0,
+  get share(): number {
+    return this.priced === 0 ? 0 : Number((this.discounted / this.priced).toFixed(4));
+  },
+};
+
+/**
+ * Built once, at startup, so a missing or malformed key set is a boot failure
+ * rather than a surprise at request time. If it cannot be built the discount is
+ * simply never granted — everyone pays full price, which is the behaviour
+ * before this existed.
+ */
+function buildDiscountGate(): ((m: string, p: string, h: Record<string, string | undefined>) => Decision) | null {
+  try {
+    const decide = gateFor({
+      minScore: GATE_MIN_SCORE,
+      allowWithheld: false,
+      allowTrackRecord: GATE_ALLOW_TRACK_RECORD,
+      jwks: GATE_JWKS_PATH,
+    });
+    console.log(`[x402] MolTrust discount active: ${Math.round(GATE_DISCOUNT * 100)} % at score >= ${GATE_MIN_SCORE}`
+      + `${GATE_ALLOW_TRACK_RECORD ? ', or with an anchored track record' : ''}`);
+    return decide;
+  } catch (err) {
+    console.warn(`[x402] MolTrust discount inactive — ${(err as Error).message}. `
+      + 'Full price for everyone; drop a JWKS at MOLTRUST_JWKS_PATH to enable it.');
+    return null;
   }
-  return null;
+}
+
+function getPrice(method: string, path: string): number | null {
+  // The matcher lives in x402-prices.ts because the bazaar catalogue needs the
+  // same answer keyed the same way. A bare startsWith once matched
+  // "/api/agent/score-free" against "/api/agent/score" — the boundary check is
+  // in matchPriceKey now, in one place rather than two.
+  const key = matchPriceKey(method, path);
+  return key === null ? null : X402_PRICES[key];
 }
 
 function isFree(path: string): boolean {
@@ -87,18 +153,120 @@ export function createX402Middleware(): MiddlewareHandler {
   }
 
   console.log('[x402] ENABLED (v2) — paid endpoints will return 402 without valid payment');
+  const discountGate = buildDiscountGate();
+  if (GATE_OPERATOR_DID) {
+    console.log(`[x402] 402 invitation active, referrer ${GATE_OPERATOR_DID}`);
+  } else {
+    console.log(`[x402] 402 invitation inactive — MOLTRUST_GATE_OPERATOR_DID ${
+      process.env.MOLTRUST_GATE_OPERATOR_DID ? 'is not a did:moltrust identifier' : 'is not set'}`);
+  }
 
   return async (c: Context, next: Next) => {
-    const url = new URL(c.req.url);
-    const path = url.pathname;
     const method = c.req.method;
+
+    // The router matches a decoded path; the price table was consulted with the
+    // raw one. The two agree until a caller writes a character as %XX, and then
+    // the handler for /api/agent/score runs while the table is asked about
+    // /api/%61gent/score, finds nothing, and the request leaves through the
+    // `no price = free` branch below. Decode once, here, and price the same
+    // path the route was chosen by.
+    let path: string;
+    try {
+      path = normalizePath(new URL(c.req.url).pathname);
+    } catch {
+      // An escape that does not decode cannot be priced, and guessing at what
+      // the caller meant is how the mismatch started.
+      return c.json({ error: 'Bad Request', detail: 'malformed percent-encoding in path' }, 400);
+    }
 
     // Free endpoints: always pass through
     if (isFree(path)) return next();
 
     // Determine price for this endpoint
-    const price = getPrice(method, path);
-    if (price === null) return next(); // no price defined = free
+    const listPrice = getPrice(method, path);
+    if (listPrice === null) {
+      // An absent price used to mean free everywhere in the service. Under a
+      // priced prefix that is the wrong default: a path the table does not
+      // recognise is the case this middleware exists for, and the caller is
+      // standing in a part of the tree that costs money. Outside those
+      // prefixes nothing is for sale and free stays free.
+      //
+      // OPTIONS is exempt: the CORS preflight carries no payment header by
+      // definition and answering it with 402 breaks browser clients.
+      if (method !== 'OPTIONS' && isUnderPricedPrefix(path)) {
+        return c.json({
+          error: 'Payment Required',
+          detail: 'no price is published for this path — use a documented endpoint',
+          documentation: 'https://api.moltrust.ch/.well-known/x402.json',
+        }, 402);
+      }
+      return next();
+    }
+
+    // A request its handler will refuse is not quoted and never settled. The
+    // handlers answer an unusable address with 400, but only after this
+    // middleware has asked for money: /api/agent/detail/0 got a 402, and a
+    // buyer who paid it would have been charged for the 400 (X402-1106). The
+    // bare route template keeps its 402 for the crawlers that read prices from
+    // it, but a payment sent against it is refused here, before settlement.
+    const addressCheck = addressParamProblem(matchPriceKey(method, path), path);
+    const paymentPresented = Boolean(c.req.header('PAYMENT-SIGNATURE') || c.req.header('X-PAYMENT'));
+    if (addressCheck === 'invalid' || (addressCheck === 'template' && paymentPresented)) {
+      const segment = path.slice(path.lastIndexOf('/') + 1);
+      return c.json({
+        error: 'invalid_address',
+        message: 'The path must end in a 0x wallet address (0x followed by 40 hex characters), '
+          + 'as in /guard/api/agent/detail/<address>. No payment was requested or taken.',
+        received: segment.slice(0, 100),
+        documentation: 'https://api.moltrust.ch/.well-known/x402.json',
+      }, 400);
+    }
+
+    // The MolTrust discount. Evaluated before anything is quoted, so the 402
+    // challenge advertises the price this caller will actually be charged —
+    // quoting one number and settling another is how a facilitator ends up
+    // rejecting a payment for an obligation we never advertised.
+    let price = listPrice;
+    let gate: Decision | null = null;
+    if (discountGate) {
+      gateStats.priced += 1;
+      gate = discountGate(method, path, c.req.header());
+      if (gate.allowed) {
+        price = Number((listPrice * (1 - GATE_DISCOUNT)).toFixed(6));
+        gateStats.discounted += 1;
+        const door = gate.via ?? 'score';
+        gateStats.discountedVia[door] = (gateStats.discountedVia[door] ?? 0) + 1;
+        c.set('moltrust_did', gate.did);
+        c.set('moltrust_discount', GATE_DISCOUNT);
+      } else {
+        // Counted by reason, because the mix is the finding: mostly
+        // attestation_missing means agents have not heard of this; mostly
+        // score_withheld means they have, and are too new to qualify.
+        gateStats.denied[gate.reason] = (gateStats.denied[gate.reason] ?? 0) + 1;
+      }
+    }
+
+    // Written once the request has left, with whether a 402 invitation went
+    // out, and never awaited: the price the caller is about to be quoted is
+    // already settled, and a slow database must not reach a request path built
+    // to make no network call at all. Writing at the decision instead would
+    // count a paid request as invited when no 402 was ever sent.
+    const logGate = (invited: boolean) => {
+      if (!gate) return;
+      recordGateDecision({
+        did: gate.did ?? null,
+        path,
+        amount: Math.round(price * 1_000_000),
+        reason: gate.reason,
+        // The sentence behind the reason. Without it every verification
+        // failure reads as `attestation_invalid` and the row cannot say
+        // whether the token was malformed, signed by an unknown key, or a
+        // governance payload presented at a gate that does not accept one.
+        detail: gate.detail,
+        via: gate.allowed ? (gate.via ?? 'score') : null,
+        invited,
+      });
+    };
 
     // Hackathon keys waive the price on the read endpoints they were meant for.
     // They never waive credential issuance: /hackathon/register hands a 72-hour
@@ -106,7 +274,26 @@ export function createX402Middleware(): MiddlewareHandler {
     // a self-service route to signed credentials.
     const apiKey = c.req.header('X-API-Key') ?? c.req.header('x-api-key') ?? '';
     if (apiKey && !isCredentialIssuance(path) && await isValidHackathonKey(apiKey)) {
+      logGate(false);
       return next();
+    }
+
+    // A paid MolTrust plan (Base, Scale) covers the read checks up to a
+    // fair-use cap per agent and month; see services/plan-coverage.ts. Never
+    // credential issuance. A payment header wins: a caller who pays is not
+    // counted against the plan.
+    if (apiKey && !isCredentialIssuance(path) && !c.req.header('PAYMENT-SIGNATURE')
+        && !c.req.header('X-PAYMENT')) {
+      const coverage = await planCovers(apiKey);
+      if (coverage.covered) {
+        c.set('moltrust_plan_payer', coverage.payerRef);
+        c.header('X-MolTrust-Plan', `covered; calls-this-month=${coverage.callsThisMonth}; fair-use=${FAIR_USE_PER_AGENT_MONTH}`);
+        logGate(false);
+        return next();
+      }
+      if (coverage.reason === 'fair_use') {
+        c.header('X-MolTrust-Plan', `fair-use-reached; fair-use=${FAIR_USE_PER_AGENT_MONTH}`);
+      }
     }
 
     // Check payment header — v2 first, then v1 backward compat
@@ -117,33 +304,73 @@ export function createX402Middleware(): MiddlewareHandler {
 
     let failure: { reason: string; detail: string } | null = null;
     if (paymentHeader) {
-      const outcome = await verifyPayment(paymentHeader, price, path, MOLTRUST_WALLET);
+      const outcome = await verifyPayment(paymentHeader, price, path, paymentAddress(), method);
       if (outcome.ok) {
         c.set('x402_protocol_version', protocolVersion);
         c.set('x402_tx_hash', outcome.txHash);
+        // The settlement receipt, as both specs define it: base64 JSON of the
+        // SettleResponse, in PAYMENT-RESPONSE for v2 and X-PAYMENT-RESPONSE for
+        // v1. Without it a buyer has paid and cannot say which transaction
+        // paid for what it received.
+        const settlement = {
+          success: true,
+          transaction: outcome.txHash,
+          network: `eip155:${BASE_CHAIN_ID}`,
+          ...(outcome.payer ? { payer: outcome.payer } : {}),
+        };
+        c.header(protocolVersion === 'v1' ? 'X-PAYMENT-RESPONSE' : 'PAYMENT-RESPONSE',
+          Buffer.from(JSON.stringify(settlement)).toString('base64'));
+        logGate(false);
         return next();
       }
       failure = { reason: outcome.reason, detail: outcome.detail };
     }
 
-    // Return 402 with x402 v2 payment details
-    c.header('PAYMENT-REQUIRED', 'true');
+    // The x402 object, built once and sent twice: base64 in the header, and
+    // bare at the top level of the body.
+    //
+    // The header carried the literal string "true". Every automated x402 index
+    // reads it, fails to base64-decode it, and skips every check that follows —
+    // CDP's validator reports 21 of 25 checks skipped for that one reason, and
+    // the bazaar extension we built is never looked at. The catalogue was empty
+    // because of a five-character header, not because of anything in the body.
+    const payload = {
+      x402Version: 2,
+      resource: buildResourceInfo(method, path),
+      // Same function the settle call uses. Written out separately, the
+      // challenge and the settlement terms drift, and the facilitator then
+      // rejects a payment for an obligation we never advertised.
+      accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, paymentAddress())],
+      // Discovery. The catalogue entry is written at settlement, not here,
+      // but a facilitator only catalogues what the challenge advertised —
+      // omit this and the endpoint stays unfindable however often it is
+      // paid for.
+      ...(() => {
+        const extensions = buildExtensions(method, path);
+        return extensions ? { extensions } : {};
+      })(),
+    };
+
+    // What the gate decided, next to the price it produced, and on
+    // `attestation_missing` the invitation to register. Body only: the
+    // PAYMENT-REQUIRED header is the x402 object and nothing else.
+    const block = gate ? gateBlock(gate, GATE_OPERATOR_DID) : null;
+    if (block?.invite) gateStats.invited += 1;
+    logGate(Boolean(block?.invite));
+
+    c.header('PAYMENT-REQUIRED', Buffer.from(JSON.stringify(payload)).toString('base64'));
     return c.json(
       {
         error: 'Payment Required',
         ...(failure ? { paymentError: failure.reason, paymentErrorDetail: failure.detail } : {}),
-        // PaymentRequired per @x402/core: x402Version as a number, resource
-        // beside accepts rather than inside each entry. The previous shape put
-        // version: '2' as a string and folded resource/description/mimeType
-        // into every offer, which is the v1 layout wearing a v2 label.
-        x402: {
-          x402Version: 2,
-          resource: buildResourceInfo(path),
-          // Same function the settle call uses. Written out separately, the
-          // challenge and the settlement terms drift, and the facilitator then
-          // rejects a payment for an obligation we never advertised.
-          accepts: [buildPaymentRequirements(path, price, `eip155:${BASE_CHAIN_ID}`, MOLTRUST_WALLET)],
-        },
+        ...(block ? { moltrustGate: block } : {}),
+        // Bare at the top level, as the spec's own example and every indexed
+        // peer do it.
+        ...payload,
+        // The old nested copy, kept for one release. Our own payment script
+        // reads body.x402, and so may anyone who integrated against it.
+        // Deprecated: read the top level instead.
+        x402: payload,
       },
       402,
     );

@@ -10,6 +10,10 @@
 // whether a payload is worth spending a facilitator call on.
 
 import type { Address } from 'viem';
+import {
+  SERVICE_NAME, SERVICE_TAGS, SERVICE_ICON_URL, SERVICE_DESCRIPTION,
+  GUARD_PREFIX, bazaarEntryFor, maskAddresses,
+} from './x402-bazaar.js';
 
 export const USDC_DECIMALS = 6;
 export const USDC_CONTRACT_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -28,7 +32,7 @@ export interface Eip3009Authorization {
 
 export interface ExactEvmPayload {
   x402Version?: number;
-  resource?: { url: string; description: string; mimeType: string };
+  resource?: { url: string; description: string; mimeType: string; [k: string]: unknown };
   /** The offer the payer took, echoed back from the 402 challenge. */
   accepted: {
     scheme: string;
@@ -52,6 +56,36 @@ export type AuthorizationCheck =
 const HEX_32 = /^0x[0-9a-fA-F]{64}$/;
 const HEX_SIG = /^0x[0-9a-fA-F]{130}$/; // r + s + v
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
+
+/** v1 network names, as X-PAYMENT carries them, to the CAIP-2 ids v2 uses. */
+const V1_NETWORKS: Record<string, string> = {
+  base: 'eip155:8453',
+  'base-sepolia': 'eip155:84532',
+};
+
+/**
+ * Bring a v1 PaymentPayload into the v2 shape the checks below read.
+ *
+ * v1 (X-PAYMENT) states `scheme` and `network` at the top level and names the
+ * network ("base"); v2 (PAYMENT-SIGNATURE) echoes the offer it took as
+ * `accepted` with a CAIP-2 id. The signed EIP-3009 authorization underneath is
+ * the same in both, so only the envelope is rewritten. A payload that already
+ * carries `accepted`, or none of the v1 fields, is returned unchanged.
+ */
+export function normalizePaymentPayload(value: Record<string, unknown>): Record<string, unknown> {
+  if ('accepted' in value) return value;
+  const scheme = value.scheme;
+  const network = value.network;
+  if (typeof scheme !== 'string' || typeof network !== 'string') return value;
+  const inner = value.payload;
+  if (!inner || typeof inner !== 'object' || !('authorization' in (inner as Record<string, unknown>))) {
+    return value;
+  }
+  return {
+    ...value,
+    accepted: { scheme, network: V1_NETWORKS[network] ?? network },
+  };
+}
 
 /** Does this decoded receipt carry an authorization rather than a tx hash? */
 export function isAuthorizationPayload(value: unknown): boolean {
@@ -242,11 +276,31 @@ export function buildPaymentRequirements(
   };
 }
 
-/** ResourceInfo per @x402/core: what is being bought, separate from the terms. */
-export function buildResourceInfo(path: string) {
+/**
+ * ResourceInfo per @x402/core: what is being bought, separate from the terms.
+ *
+ * Both fields describe the route, not the request. They used to be built from
+ * the concrete path, so the address of whoever paid first ended up in the
+ * public catalogue entry — ours did, from 2026-09-23 until 2026-10-05. The
+ * route template and the table's own sentence say the same thing about the
+ * endpoint without saying anything about a caller.
+ */
+export function buildResourceInfo(method: string, path: string) {
+  const entry = bazaarEntryFor(method, path);
+  const route = (entry && 'routeTemplate' in entry && entry.routeTemplate)
+    || `${GUARD_PREFIX}${maskAddresses(path)}`;
   return {
-    url: `https://api.moltrust.ch/guard${path}`,
-    description: `MolTrust API — ${path}`,
+    url: `https://api.moltrust.ch${route}`,
+    description: entry?.description ?? SERVICE_DESCRIPTION,
     mimeType: 'application/json',
+    // Service metadata the bazaar extension reads for catalogue display. It is
+    // optional and additive: a facilitator that does not know these fields
+    // ignores them, and one that does gets a name and tags without an
+    // out-of-band admin step. Both stay inside the spec's 32-character
+    // printable-ASCII bound, and the icon is a plain https URL — a facilitator
+    // silently drops anything else.
+    serviceName: SERVICE_NAME,
+    tags: [...SERVICE_TAGS],
+    iconUrl: SERVICE_ICON_URL,
   };
 }
