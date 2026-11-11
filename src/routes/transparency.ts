@@ -23,8 +23,11 @@ function sanitizeProof(data: any) {
     tests_passed: data.credentialSubject?.evaluationSummary?.testsPassed,
     tests_run: data.credentialSubject?.evaluationSummary?.testsRun,
     dimensions: data.credentialSubject?.evaluationSummary?.dimensions || [],
-    anchor_tx: data.credentialSubject?.anchorTx,
-    network: data.credentialSubject?.network || 'base',
+    // `anchor_tx` and `network: 'base'` stood here. The value came from
+    // routes/harness.ts, which built it by slicing the proof hash and never
+    // sent a transaction; eth_getTransactionByHash returned null for it. These
+    // routes are unauthenticated, so a chain field with nothing behind it is
+    // worse than no field: it passes inspection and fails only on a query.
     proof: data.proof ? { type: data.proof.type, created: data.proof.created } : undefined,
   };
 }
@@ -64,7 +67,6 @@ app.get('/transparency/history', (c) => {
         vertical: data.credentialSubject?.vertical,
         pass_rate: data.credentialSubject?.evaluationSummary?.passRate,
         tests_run: data.credentialSubject?.evaluationSummary?.testsRun,
-        anchor_tx: data.credentialSubject?.anchorTx,
       };
     } catch {
       return null;
@@ -92,8 +94,6 @@ app.get('/transparency/verify/:hash', (c) => {
           issuanceDate: data.issuanceDate,
           expirationDate: data.expirationDate,
           vertical: data.credentialSubject?.vertical,
-          anchor_tx: data.credentialSubject?.anchorTx,
-          network: 'base',
         });
       }
     } catch {
