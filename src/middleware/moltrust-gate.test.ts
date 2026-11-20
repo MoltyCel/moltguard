@@ -26,6 +26,8 @@ import {
 // for a JSON that tsc never emitted. As an import, resolveJsonModule carries
 // the vectors along with the code that replays them.
 import fixture from './moltrust-gate.vectors.json' with { type: 'json' };
+// ES256 next to Ed25519, emitted by the reference's make-es256-fixtures.js.
+import es256Fixture from './moltrust-gate.es256-vectors.json' with { type: 'json' };
 
 describe('parity with @moltrust/x402', () => {
   it('replays every reference vector', () => {
@@ -45,6 +47,16 @@ describe('parity with @moltrust/x402', () => {
       'attestation_invalid', 'proof_invalid', 'credential_missing',
       'attestation_missing', 'track_record_invalid']) {
       expect(reasons.has(required), `no vector produces ${required}`).toBe(true);
+    }
+  });
+
+  it('replays the ES256 vectors: each kid verifies only with its own algorithm', () => {
+    expect(es256Fixture.vectors.length).toBeGreaterThanOrEqual(8);
+    for (const v of es256Fixture.vectors) {
+      const decide = gateFor({ jwks: es256Fixture.jwks as Jwks, ...v.options });
+      const got = decide(v.method, v.path, v.headers, es256Fixture.now_ms);
+      expect(`${v.name}: ${got.reason}`).toBe(`${v.name}: ${v.expected.reason}`);
+      expect(got.allowed, `${v.name}: ${got.detail}`).toBe(v.expected.allowed);
     }
   });
 });
