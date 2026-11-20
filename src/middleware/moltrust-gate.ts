@@ -61,6 +61,8 @@ export interface Jwk {
   crv: string;
   kid: string;
   x: string;
+  /** P-256 keys only. */
+  y?: string;
   use?: string;
   alg?: string;
 }
@@ -155,7 +157,17 @@ export function loadJwks(pathOrObject: Jwks | string): Jwks {
   return jwks;
 }
 
-function keyForKid(jwks: Jwks, kid: string): crypto.KeyObject {
+// Registry key types this gate accepts, and the one JWS `alg` each may sign
+// with. The algorithm comes from the key the kid names, never from the token
+// header alone: a header that says ES256 over an Ed25519 kid is refused, and
+// so is the reverse.
+type JwsAlg = 'EdDSA' | 'ES256';
+const KEY_ALGS: Record<string, JwsAlg> = {
+  'OKP/Ed25519': 'EdDSA',
+  'EC/P-256': 'ES256',
+};
+
+function keyForKid(jwks: Jwks, kid: string): { alg: JwsAlg; key: crypto.KeyObject } {
   const jwk = jwks.keys.find((k) => k.kid === kid);
   if (!jwk) {
     throw new Error(
@@ -163,13 +175,24 @@ function keyForKid(jwks: Jwks, kid: string): crypto.KeyObject {
       + 'token was not issued by this registry',
     );
   }
-  if (jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519') {
+  const alg: JwsAlg | undefined = KEY_ALGS[`${jwk.kty}/${jwk.crv}`];
+  if (!alg) {
     throw new Error(`unsupported key: kty=${jwk.kty} crv=${jwk.crv}`);
   }
-  return crypto.createPublicKey({
-    key: { kty: 'OKP', crv: 'Ed25519', x: jwk.x },
-    format: 'jwk',
-  });
+  const material = alg === 'EdDSA'
+    ? { kty: 'OKP', crv: 'Ed25519', x: jwk.x }
+    : { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y };
+  return { alg, key: crypto.createPublicKey({ key: material, format: 'jwk' }) };
+}
+
+/** Verify a JWS signature with the algorithm the registry key fixes. */
+function verifyJwsSignature(
+  alg: JwsAlg, key: crypto.KeyObject, signingInput: Buffer, sig: Buffer,
+): boolean {
+  if (alg === 'EdDSA') return crypto.verify(null, signingInput, key, sig);
+  // ES256 in JWS is the raw r||s pair (RFC 7518 §3.4), 64 bytes, not DER.
+  if (sig.length !== 64) return false;
+  return crypto.verify('sha256', signingInput, { key, dsaEncoding: 'ieee-p1363' }, sig);
 }
 
 function keyFromHex(hex: string): crypto.KeyObject {
@@ -191,12 +214,14 @@ export function verifyAttestation(token: string, jwks: Jwks, now?: number): Gate
   const [headerB64, payloadB64, sigB64] = parts;
 
   const header = JSON.parse(b64urlDecode(headerB64).toString('utf8'));
-  if (header.alg !== 'EdDSA') throw new Error(`alg=${header.alg}, expected EdDSA`);
   if (!header.kid) throw new Error('header carries no kid');
 
-  const key = keyForKid(jwks, header.kid);
-  const ok = crypto.verify(
-    null, Buffer.from(`${headerB64}.${payloadB64}`, 'ascii'), key, b64urlDecode(sigB64),
+  const { alg, key } = keyForKid(jwks, header.kid);
+  if (header.alg !== alg) {
+    throw new Error(`alg=${header.alg}, but kid ${JSON.stringify(header.kid)} is an ${alg} key`);
+  }
+  const ok = verifyJwsSignature(
+    alg, key, Buffer.from(`${headerB64}.${payloadB64}`, 'ascii'), b64urlDecode(sigB64),
   );
   if (!ok) throw new Error('signature does not cover this payload');
 
