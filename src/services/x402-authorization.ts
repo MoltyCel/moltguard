@@ -299,8 +299,8 @@ export function buildResourceInfo(method: string, path: string) {
     // out-of-band admin step. Both stay inside the spec's 32-character
     // printable-ASCII bound, and the icon is a plain https URL — a facilitator
     // silently drops anything else.
-    serviceName: SERVICE_NAME,
-    tags: [...SERVICE_TAGS],
+    serviceName: entry?.serviceName ?? SERVICE_NAME,
+    tags: [...(entry?.tags ?? SERVICE_TAGS)],
     iconUrl: SERVICE_ICON_URL,
   };
 }

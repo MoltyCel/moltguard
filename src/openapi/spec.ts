@@ -980,6 +980,47 @@ export const spec: OpenAPIV3_1.Document = {
         },
       },
     },
+    '/api/molcheck/check': {
+      post: {
+        tags: ['molcheck'],
+        summary: 'MolCheck: check one proposed action against its mandate (paid)',
+        description:
+          'Returns PERMIT, DENY or PENDING with a MolCheck record (core and sha256 core_digest) that anyone '
+          + 'holding the same mandate and transaction can recompute offline. Fail-closed: a missing or '
+          + 'malformed mandate yields DENY with HTTP 200. Stateless: nothing is stored or anchored.',
+        operationId: 'molcheckCheck',
+        security: [{ x402: [] }],
+        ...({ 'x-moltrust-pricing': { amount: '0.01', currency: 'USDC', chain: 'eip155:8453' } } as any),
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: {
+            type: 'object',
+            required: ['mandate', 'transaction'],
+            properties: {
+              mandate: { type: 'object', additionalProperties: true, description: 'Mandate with grants (type_fields, action_binding, constraints, disposition)' },
+              transaction: { type: 'object', additionalProperties: true, description: 'Proposed transaction; action carries exactly the grant type_fields' },
+              prev_core_digest: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$', description: 'Optional link to a previous MolCheck record' },
+            },
+          } } },
+        },
+        responses: {
+          '200': { description: 'Verdict and MolCheck record', content: { 'application/json': { schema: {
+            type: 'object',
+            properties: {
+              verdict: { type: 'string', enum: ['PERMIT', 'DENY', 'PENDING'] },
+              reason: { type: 'string' },
+              grant_index: { type: ['integer', 'null'] },
+              trace: { type: 'array', items: { type: 'object', additionalProperties: true } },
+              record: { type: 'object', properties: { core: { type: 'object', additionalProperties: true }, core_digest: { type: 'string' } } },
+            },
+          } } } },
+          '400': { description: 'Body is not a JSON object, exceeds 64 KiB, carries a malformed prev_core_digest, or uses profile "ads". Refused before payment.' },
+          '402': { description: 'x402 payment required', content: { 'application/json': { schema: { '$ref': '#/components/schemas/PaymentRequired' } } } },
+          '502': { description: 'The check could not be completed after payment.' },
+          '503': { description: 'Not configured on this host. Refused before payment.' },
+        },
+      },
+    },
     '/api/credential/verify': {
       post: {
         tags: ['credential-issuance'],

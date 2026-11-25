@@ -34,7 +34,53 @@ export const SERVICE_ICON_URL = 'https://moltrust.ch/favicon-32x32.png';
 export const SERVICE_DESCRIPTION =
   'Pre-transaction identity and authorization checks for AI agents, paid per call in USDC on Base.';
 
-type QueryEndpoint = {
+/**
+ * Per-endpoint override of the service metadata on `resource`. An endpoint that
+ * is its own product (MolCheck) is named as such in a catalogue instead of
+ * under the MoltGuard umbrella. Same spec bounds as the defaults: name and each
+ * tag at most 32 printable-ASCII characters, at most five tags.
+ */
+type ServiceMeta = { serviceName?: string; tags?: readonly string[] };
+
+export const MOLCHECK_SERVICE_NAME = 'MolCheck';
+export const MOLCHECK_TAGS = ['authorization', 'mandate-check', 'agent-trust', 'receipts', 'payments'] as const;
+export const MOLCHECK_DESCRIPTION =
+  'MolCheck checks one proposed agent action, such as a payment, against the mandate its principal '
+  + 'granted and returns PERMIT, DENY or PENDING with a MolCheck record: digests of mandate, '
+  + 'transaction and action plus a sha256 core_digest that anyone holding the same inputs can '
+  + 'recompute offline. Meant for the step before an agent executes an action. Fail-closed: a '
+  + 'missing or malformed mandate yields DENY.';
+
+/**
+ * Public conformance vector aae-enforce-vector-01 with the payee written as a
+ * DID instead of a 20-byte address (a catalogue entry carries no addresses
+ * outside asset and payTo). Expected: PERMIT, core_digest as in the output
+ * example, measured against the live check on 2026-11-25.
+ */
+export const MOLCHECK_EXAMPLE_BODY: Record<string, unknown> = {
+  mandate: {
+    mandate_version: '1.0',
+    grants: [
+      {
+        action_binding: 'sha256:8c2938c57c38e44ed13ce9aef8a741bfc6e636fc60857c05c483078aa26cfb76',
+        type_fields: ['verb', 'asset', 'chain'],
+        constraints: [
+          { field: 'to', type: 'exact', value: 'did:web:merchant.example' },
+          { field: 'amount', type: 'range', lo: 0, hi: 1000 },
+        ],
+        disposition: 'allow',
+      },
+    ],
+  },
+  transaction: {
+    action: { verb: 'transfer', asset: 'USDC', chain: 'base' },
+    to: 'did:web:merchant.example',
+    amount: 500,
+    region: 'CH',
+  },
+};
+
+type QueryEndpoint = ServiceMeta & {
   method: 'GET';
   description: string;
   /** `:param` form, including the mount prefix. Absent for a static path. */
@@ -48,7 +94,7 @@ type QueryEndpoint = {
   output?: { type: string; example?: unknown };
 };
 
-type BodyEndpoint = {
+type BodyEndpoint = ServiceMeta & {
   method: 'POST';
   description: string;
   bodyType: 'json';
@@ -178,6 +224,39 @@ export const BAZAAR_ENDPOINTS: Record<string, BazaarEndpoint> = {
         issuanceDate: '2026-09-21T00:00:00.000Z',
         credentialSubject: { id: 'did:base:0x…' },
         jws: 'eyJhbGciOiJFZERTQSIs…',
+      },
+    },
+  },
+  'POST /api/molcheck/check': {
+    method: 'POST',
+    serviceName: MOLCHECK_SERVICE_NAME,
+    tags: [...MOLCHECK_TAGS],
+    description: MOLCHECK_DESCRIPTION,
+    bodyType: 'json',
+    // A complete, working request: the example a catalogue shows is the one a
+    // buyer copies, so it has to produce a real verdict. See
+    // MOLCHECK_EXAMPLE_BODY for where it comes from and what it returns.
+    body: MOLCHECK_EXAMPLE_BODY,
+    output: {
+      type: 'json',
+      example: {
+        verdict: 'PERMIT',
+        reason: 'grant[0] matched, all constraints hold, disposition=allow',
+        grant_index: 0,
+        trace: [],
+        record: {
+          core: {
+            enforce_version: '3.0',
+            mandate_digest: 'sha256:…',
+            transaction_digest: 'sha256:…',
+            action_digest: 'sha256:…',
+            verdict: 'PERMIT',
+            grant_index: 0,
+            trace: [],
+            prev_core_digest: null,
+          },
+          core_digest: 'sha256:4ccf0b60c97808d2b2fca2b9d24ab62b9d38882643ed497f82148bd2da6a4be2',
+        },
       },
     },
   },

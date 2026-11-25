@@ -15,6 +15,10 @@ export const X402_PRICES: Record<string, number> = {
   'GET /api/market/check':      0.01,
   'POST /api/credential/issue': 0.02,
 
+  // MolCheck: one proposed action checked against its mandate, with a record
+  // the caller can recompute. Priced like the other single checks.
+  'POST /api/molcheck/check':   0.01,
+
   // Skill Verification
   'POST /vc/skill/issue':       5.00,
 
