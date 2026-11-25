@@ -11,6 +11,7 @@ import { gateBlock, parseOperatorDid } from './gate-invite.js';
 import { recordGateDecision } from '../services/gateLog.js';
 import { paymentAddress } from '../paymentAddress.js';
 import { planCovers, FAIR_USE_PER_AGENT_MONTH } from '../services/plan-coverage.js';
+import { molcheckBodyProblem } from '../services/molcheck.js';
 
 /** Routes that mint a signed credential — never waived by a hackathon key. */
 const CREDENTIAL_ISSUANCE = [
@@ -220,6 +221,15 @@ export function createX402Middleware(): MiddlewareHandler {
         received: segment.slice(0, 100),
         documentation: 'https://api.moltrust.ch/.well-known/x402.json',
       }, 400);
+    }
+
+    // MolCheck reads a body its handler may refuse. A paid request is settled
+    // before the handler runs, so the same check runs here first: a body that
+    // would be refused is answered without settlement. The crawler's unpaid
+    // probe (empty body) still gets its 402.
+    if (paymentPresented && matchPriceKey(method, path) === 'POST /api/molcheck/check') {
+      const problem = molcheckBodyProblem(await c.req.text());
+      if (problem) return c.json({ error: problem.error, message: problem.message }, problem.status);
     }
 
     // The MolTrust discount. Evaluated before anything is quoted, so the 402
